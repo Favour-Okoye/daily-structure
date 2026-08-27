@@ -7,7 +7,8 @@ import type { CharId, Mood } from "../../lib/crew";
  */
 
 type Prop = "strawHat" | "swords" | "earrings" | "scar" | "haramaki" | "staff"
-  | "longNose" | "whiskers" | "lowerMask" | "antlerHat" | "book" | "curlyBrow";
+  | "longNose" | "whiskers" | "lowerMask" | "antlerHat" | "book" | "curlyBrow"
+  | "bandana" | "vest" | "sailorTop";
 
 interface ChibiConfig {
   skin: string;
@@ -26,18 +27,18 @@ interface ChibiConfig {
 const CONFIG: Record<CharId, ChibiConfig> = {
   luffy: {
     skin: "#fde3c5", hair: "#1c1917", hairStyle: "spiky",
-    top: "#ef4444", pants: "#1e40af", shoes: "#92400e",
-    props: ["strawHat", "scar"], aura: ["#fda4af", "#f87171", "#dc2626"],
+    top: "#ef4444", pants: "#3b82f6", shoes: "#92400e",
+    props: ["strawHat", "scar", "vest"], aura: ["#fda4af", "#f87171", "#dc2626"],
   },
   zoro: {
     skin: "#f5d3a5", hair: "#22c55e", hairStyle: "buzz",
-    top: "#e2e8f0", pants: "#1c1917", shoes: "#1c1917",
-    props: ["haramaki", "swords", "earrings"], aura: ["#86efac", "#22c55e"],
+    top: "#f1f5f9", pants: "#14532d", shoes: "#1c1917",
+    props: ["bandana", "haramaki", "swords", "earrings"], aura: ["#86efac", "#22c55e"],
   },
   nami: {
     skin: "#fde3c5", hair: "#fb923c", hairStyle: "long",
     top: "#ffffff", sleeves: "#fde3c5", pants: "#60a5fa", shoes: "#b45309",
-    props: ["staff"], aura: ["#bae6fd", "#38bdf8"],
+    props: ["staff", "sailorTop"], aura: ["#bae6fd", "#38bdf8"],
   },
   usopp: {
     skin: "#deab7c", hair: "#44403c", hairStyle: "long",
@@ -86,13 +87,15 @@ const CONFIG: Record<CharId, ChibiConfig> = {
   },
 };
 
-/** Big sparkly open eye with highlights — the heart of kawaii. */
+/** Big warm brown anime eye — dark rim, amber iris, deep pupil, double glints. */
 function Eye({ cx }: { cx: number }) {
   return (
     <g>
-      <ellipse cx={cx} cy={62} rx={6.2} ry={7.8} fill="#292524" />
-      <circle cx={cx + 2} cy={58.5} r={2.4} fill="#ffffff" />
-      <circle cx={cx - 2.4} cy={65} r={1.2} fill="#ffffff" opacity="0.9" />
+      <ellipse cx={cx} cy={62} rx={6.8} ry={8.4} fill="#2b1708" />
+      <ellipse cx={cx} cy={63.5} rx={4.8} ry={5.8} fill="#92400e" />
+      <ellipse cx={cx} cy={65.5} rx={2.7} ry={3.1} fill="#2b1708" />
+      <circle cx={cx + 2.3} cy={58.4} r={2.7} fill="#ffffff" />
+      <circle cx={cx - 2.7} cy={66} r={1.3} fill="#ffffff" opacity="0.95" />
     </g>
   );
 }
@@ -123,7 +126,8 @@ function Face({ mood }: { mood: Mood }) {
         <g>
           <Eye cx={45} />
           <Eye cx={75} />
-          <path d="M56 73 q4 3.5 8 0" fill="none" stroke="#292524" strokeWidth="2.6" strokeLinecap="round" />
+          {/* the ω cat-mouth — peak kawaii */}
+          <path d="M53 72.5 q3.5 4 7 0 q3.5 4 7 0" fill="none" stroke="#292524" strokeWidth="2.6" strokeLinecap="round" />
           <Blush />
         </g>
       );
@@ -158,20 +162,25 @@ function Face({ mood }: { mood: Mood }) {
 function Hair({ style, color }: { style: ChibiConfig["hairStyle"]; color: string }) {
   switch (style) {
     case "spiky":
+      // chunky pointed bangs hanging over the forehead — ref-board style
       return (
         <path
-          d="M22 58 q-3 -30 16 -40 l5 9 7 -12 6 10 6 -12 6 12 7 -10 5 11 6 -8 q18 12 16 40 q-20 -17 -40 -17 q-20 0 -40 17 z"
+          d="M22 52 a38 34 0 0 1 76 0 l-8 -8 -6 12 -8 -14 -8 14 -8 -14 -8 14 -8 -14 -6 12 -8 -8 z"
           fill={color}
         />
       );
     case "buzz":
       return <path d="M22 55 a38 36 0 0 1 76 0 q-19 -17 -38 -17 q-19 0 -38 17 z" fill={color} />;
     case "long":
+      // side curtains + a soft pointed fringe
       return (
         <g>
           <path d="M21 54 q-6 34 4 50 l12 -7 q-7 -18 -3 -35 z" fill={color} />
           <path d="M99 54 q6 34 -4 50 l-12 -7 q7 -18 3 -35 z" fill={color} />
-          <path d="M22 55 a38 36 0 0 1 76 0 q-7 -10 -17 -11 l-2 7 -8 -9 -10 9 -8 -8 -5 8 q-15 0 -26 4 z" fill={color} />
+          <path
+            d="M22 55 a38 36 0 0 1 76 0 l-6 -6 -7 12 -8 -12 -9 13 -9 -13 -8 12 -7 -12 -6 6 z"
+            fill={color}
+          />
         </g>
       );
   }
@@ -181,6 +190,28 @@ function Props({ config }: { config: ChibiConfig }) {
   const has = (p: Prop) => config.props.includes(p);
   return (
     <g>
+      {has("bandana") && (
+        <g>
+          <path d="M23 48 a38 32 0 0 1 74 0 l0 5 q-37 -13 -74 0 z" fill="#1c1917" />
+          <path d="M93 42 l12 -7 -3 11 9 -1 -9 9 z" fill="#1c1917" />
+        </g>
+      )}
+      {has("vest") && (
+        <g>
+          <rect x={54} y={93} width={12} height={24} rx={3} fill={config.skin} />
+          <circle cx={51} cy={100} r={1.7} fill="#fbbf24" />
+          <circle cx={51} cy={107} r={1.7} fill="#fbbf24" />
+          <circle cx={69} cy={100} r={1.7} fill="#fbbf24" />
+          <rect x={47} y={109} width={11} height={4} rx={2} fill="#ffffff" />
+          <rect x={62} y={109} width={11} height={4} rx={2} fill="#ffffff" />
+        </g>
+      )}
+      {has("sailorTop") && (
+        <g>
+          <path d="M46 93 l14 11 14 -11" fill="none" stroke="#3b82f6" strokeWidth="4" strokeLinecap="round" />
+          <rect x={45} y={107} width={30} height={4.5} rx={2} fill="#3b82f6" opacity="0.9" />
+        </g>
+      )}
       {config.headband && (
         <g>
           <rect x={24} y={33} width={72} height={9} rx={4.5} fill={config.headband} />
@@ -250,9 +281,11 @@ function Props({ config }: { config: ChibiConfig }) {
       )}
       {has("strawHat") && (
         <g transform="rotate(-3 60 22)">
-          <ellipse cx={60} cy={26} rx={41} ry={10} fill="#fbbf24" stroke="#92400e" strokeWidth="2.5" />
-          <path d="M33 25 a27 23 0 0 1 54 0 l0 2 a27 8 0 0 1 -54 0 z" fill="#fcd34d" stroke="#92400e" strokeWidth="2.5" />
-          <path d="M33 20 a27 7 0 0 0 54 0 l0 7 a27 7 0 0 1 -54 0 z" fill="#ef4444" />
+          <ellipse cx={60} cy={27} rx={46} ry={11.5} fill="#f59e0b" stroke="#92400e" strokeWidth="2.5" />
+          <ellipse cx={60} cy={25.5} rx={41} ry={9.5} fill="#fbbf24" />
+          <path d="M30 24 a30 25 0 0 1 60 0 l0 3 a30 9 0 0 1 -60 0 z" fill="#fcd34d" stroke="#92400e" strokeWidth="2.5" />
+          <path d="M30 19 a30 8 0 0 0 60 0 l0 8 a30 8 0 0 1 -60 0 z" fill="#ef4444" />
+          <path d="M38 12 a30 18 0 0 1 44 0" fill="none" stroke="#d97706" strokeWidth="1.6" opacity="0.7" />
         </g>
       )}
     </g>

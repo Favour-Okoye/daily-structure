@@ -8,7 +8,8 @@ import type { CharId, Mood } from "../../lib/crew";
 
 type Prop = "strawHat" | "swords" | "earrings" | "scar" | "haramaki" | "staff"
   | "longNose" | "whiskers" | "lowerMask" | "antlerHat" | "book" | "curlyBrow"
-  | "bandana" | "vest" | "sailorTop" | "deerNose" | "straps" | "neckBand" | "hairbandTop";
+  | "bandana" | "vest" | "sailorTop" | "deerNose" | "straps" | "neckBand" | "hairbandTop"
+  | "sunglassesTop" | "turtleneck";
 
 interface ChibiConfig {
   skin: string;
@@ -61,9 +62,10 @@ const CONFIG: Record<CharId, ChibiConfig> = {
     props: ["antlerHat", "deerNose", "straps"], aura: ["#f9a8d4", "#ec4899"],
   },
   robin: {
-    skin: "#fbd8b0", hair: "#312e81", hairStyle: "long",
-    top: "#8b5cf6", sleeves: "#fbd8b0", pants: "#4c1d95", shoes: "#1c1917", iris: "#3b82f6",
-    props: ["book"], aura: ["#c4b5fd", "#8b5cf6"],
+    // hime-cut black hair, sunglasses up top, purple turtleneck — her reference
+    skin: "#fbd8b0", hair: "#221f3d", hairStyle: "hime",
+    top: "#7c3aed", sleeves: "#7c3aed", pants: "#4c1d95", shoes: "#1c1917", iris: "#2563eb",
+    props: ["sunglassesTop", "turtleneck", "book"], aura: ["#c4b5fd", "#8b5cf6"],
   },
   naruto: {
     skin: "#fde3c5", hair: "#fde047", hairStyle: "spiky",
@@ -327,6 +329,27 @@ function Props({ config }: { config: ChibiConfig }) {
           <rect x={44} y={87} width={32} height={7} rx={3.5} fill="#334155" />
           <rect x={53} y={85.5} width={14} height={10} rx={2} fill="#cbd5e1" stroke="#64748b" strokeWidth="1" />
           <path d="M57 91 q3 -3.5 6 0" fill="none" stroke="#475569" strokeWidth="1.4" />
+        </g>
+      )}
+      {has("turtleneck") && (
+        <g>
+          <rect x={45} y={85} width={30} height={10} rx={5} fill={config.top} stroke="#00000025" strokeWidth="1" />
+          <g stroke="#00000030" strokeWidth="1.2">
+            <line x1={51} y1={86} x2={51} y2={94} />
+            <line x1={57} y1={86} x2={57} y2={94} />
+            <line x1={63} y1={86} x2={63} y2={94} />
+            <line x1={69} y1={86} x2={69} y2={94} />
+          </g>
+        </g>
+      )}
+      {has("sunglassesTop") && (
+        <g transform="rotate(-5 60 29)">
+          <path d="M36 30 l-8 4 M84 30 l8 4" stroke="#cbd5e1" strokeWidth="2.5" strokeLinecap="round" />
+          <path d="M53 28 q7 -5 14 0" fill="none" stroke="#cbd5e1" strokeWidth="3" />
+          <circle cx={45} cy={30} r={9.5} fill="#ea580c" stroke="#e2e8f0" strokeWidth="2.5" />
+          <circle cx={75} cy={30} r={9.5} fill="#ea580c" stroke="#e2e8f0" strokeWidth="2.5" />
+          <path d="M40 26 a7 7 0 0 1 6 -3" fill="none" stroke="#fdba74" strokeWidth="2.5" strokeLinecap="round" />
+          <path d="M70 26 a7 7 0 0 1 6 -3" fill="none" stroke="#fdba74" strokeWidth="2.5" strokeLinecap="round" />
         </g>
       )}
       {has("hairbandTop") && (

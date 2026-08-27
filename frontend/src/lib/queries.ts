@@ -2,7 +2,66 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "./supabase";
 import { useAuth } from "./auth";
 import { awardCustom } from "./xp";
+import { appDayWindowUtc } from "./day";
 import type { AnchorDef, ChurchEvent } from "./anchors";
+
+/* ------------------------------------------------------------------ */
+/* Offline outbox: checks made offline sync when the sea calms.        */
+/* Safe to replay — every write is idempotent (PK + dedupe index).     */
+/* ------------------------------------------------------------------ */
+
+const OUTBOX_KEY = "ds:outbox";
+
+interface OutboxItem {
+  day: string;
+  slug: string;
+  action: string;
+  refType: string;
+  refId: string;
+  points: number;
+  meta: Record<string, unknown>;
+}
+
+function readOutbox(): OutboxItem[] {
+  try {
+    return JSON.parse(localStorage.getItem(OUTBOX_KEY) ?? "[]") as OutboxItem[];
+  } catch {
+    return [];
+  }
+}
+
+function writeOutbox(items: OutboxItem[]) {
+  try {
+    localStorage.setItem(OUTBOX_KEY, JSON.stringify(items));
+  } catch {
+    /* storage unavailable */
+  }
+}
+
+function isNetworkError(message: string): boolean {
+  return /fetch|network|connection/i.test(message);
+}
+
+export async function flushOutbox(): Promise<number> {
+  if (!supabase) return 0;
+  const items = readOutbox();
+  if (items.length === 0) return 0;
+  const remaining: OutboxItem[] = [];
+  for (const it of items) {
+    try {
+      const { error } = await supabase.from("ds_anchor_log").upsert(
+        { day: it.day, anchor_slug: it.slug, status: "done", meta: it.meta },
+        { onConflict: "user_id,day,anchor_slug", ignoreDuplicates: true }
+      );
+      if (error) throw error;
+      await awardCustom(it.action, it.refType, it.refId, it.points, true);
+    } catch {
+      remaining.push(it);
+    }
+  }
+  writeOutbox(remaining);
+  return items.length - remaining.length;
+}
 
 export interface AnchorLogRow {
   anchor_slug: string;
@@ -46,8 +105,38 @@ async function logAndAward(
       { day, anchor_slug: slug, status: "done", meta },
       { onConflict: "user_id,day,anchor_slug", ignoreDuplicates: true }
     );
-  if (error) throw error;
+  if (error) {
+    if (isNetworkError(error.message)) {
+      // offline: queue it, sync later — the ledger is idempotent
+      writeOutbox([...readOutbox(), { day, slug, action, refType, refId, points, meta }]);
+      return;
+    }
+    throw error;
+  }
   await awardCustom(action, refType, refId, points);
+}
+
+/** Counts today's MoneyTree watch_video events (shared Supabase project).
+ *  Queries by created_at UTC window — NEVER by MT's midnight-based happened_on. */
+export function useMoneyTreeVideoCount(day: string, enabled: boolean) {
+  const { session } = useAuth();
+  const { startIso, endIso } = appDayWindowUtc(day);
+  return useQuery({
+    queryKey: ["mt_watch_count", session?.user.id, day],
+    enabled: !!supabase && !!session && enabled,
+    staleTime: 5 * 60_000,
+    refetchInterval: 10 * 60_000,
+    queryFn: async (): Promise<number> => {
+      const { count, error } = await supabase!
+        .from("xp_events")
+        .select("id", { count: "exact", head: true })
+        .eq("action", "watch_video")
+        .gte("created_at", startIso)
+        .lt("created_at", endIso);
+      if (error) throw error;
+      return count ?? 0;
+    },
+  });
 }
 
 export function useCheckAnchor(day: string) {

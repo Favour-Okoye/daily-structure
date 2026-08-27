@@ -2,7 +2,7 @@ import { useEffect, useRef } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "./supabase";
 import { useAuth } from "./auth";
-import { appDay, shiftDay } from "./day";
+import { appDay, isoWeekKey, shiftDay } from "./day";
 import {
   ALL_CHARS,
   bondOf,
@@ -21,6 +21,7 @@ import {
   prevExpectedDay,
   questRequirementMet,
   RECRUITS,
+  GRACE_PER_WEEK,
   WALKOUT_GONE,
   WALKOUT_PACKING,
   areaMood,
@@ -279,7 +280,7 @@ export function useCrew() {
         jobPrepCount: countsQ.data!.jobPrepCount,
         mindCount: countsQ.data!.mindCount,
         totalXp,
-        settledGoalWeeks: 0, // weekly goals arrive in Phase 5
+        settledGoalWeeks: next.settledGoalWeeks,
         comebackDone: next.comebackDone,
       };
       for (const r of RECRUITS) {
@@ -423,6 +424,58 @@ export function useBuyLevel() {
     ].slice(0, 60);
     save.mutate(next);
     return { ok: true, message: `${FORM_NAMES[charId][target - 1]} unlocked!` };
+  };
+}
+
+/** Grace tokens: 2/week, typed reason, never for the confession, no XP. */
+export function useGrace() {
+  const { data } = useCrewState();
+  const save = useSaveCrew();
+  const { session } = useAuth();
+  const qc = useQueryClient();
+  const today = appDay();
+  const weekKey = isoWeekKey(today);
+  const state = data?.state ?? null;
+  const used = state ? (state.grace.weekKey === weekKey ? state.grace.used : 0) : 0;
+  const left = Math.max(0, GRACE_PER_WEEK - used);
+
+  const grace = useMutation({
+    mutationFn: async ({ slug, reason }: { slug: string; reason: string }) => {
+      if (!supabase || !state) throw new Error("Not ready.");
+      if (slug === "confession") throw new Error("The confession has no substitute.");
+      if (left <= 0) throw new Error("No grace tokens left this week.");
+      if (reason.trim().length < 10) throw new Error("Write the real reason (10+ characters).");
+      const { error } = await supabase.from("ds_anchor_log").upsert(
+        { day: today, anchor_slug: slug, status: "grace", meta: { graceReason: reason.trim() } },
+        { onConflict: "user_id,day,anchor_slug", ignoreDuplicates: true }
+      );
+      if (error) throw error;
+      save.mutate({
+        ...state,
+        grace: { weekKey, used: used + 1 },
+        log: [
+          { day: today, text: `🕊️ Grace used for ${slug}: "${reason.trim().slice(0, 80)}"` },
+          ...state.log,
+        ].slice(0, 60),
+      });
+    },
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ["ds_anchor_log", session?.user.id, today] });
+      void qc.invalidateQueries({ queryKey: ["ds_anchor_range", session?.user.id] });
+    },
+  });
+
+  return { left, grace };
+}
+
+/** Rotate the skill deck after a completed skill block. */
+export function useAdvanceSkill() {
+  const { data } = useCrewState();
+  const save = useSaveCrew();
+  return () => {
+    const state = data?.state;
+    if (!state) return;
+    save.mutate({ ...state, skillPointer: state.skillPointer + 1 });
   };
 }
 

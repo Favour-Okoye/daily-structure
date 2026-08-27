@@ -105,6 +105,18 @@ export function wallMinutes(now: Date = appNow()): number {
   return h * 60 + m;
 }
 
+/** Monday of the ISO week containing `day`. */
+export function mondayOf(day: string): string {
+  const w = weekdayOf(day); // 0=Sun..6=Sat
+  return shiftDay(day, -((w + 6) % 7));
+}
+
+/** Monday of an ISO week key like "2026-W35". */
+export function mondayOfWeekKey(weekKey: string): string {
+  const [y, w] = weekKey.split("-W");
+  return shiftDay(mondayOf(`${y}-01-04`), (Number(w) - 1) * 7);
+}
+
 /** Sort key placing the 00:00-04:00 block at the END of the app-day timeline. */
 export function daySortKey(startMin: number): number {
   return (startMin + 1440 - 240) % 1440;

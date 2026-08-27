@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import confetti from "canvas-confetti";
 import { Link } from "react-router-dom";
 import { appDay, daySortKey, fmtMin, wallMinutes, weekdayOf } from "../lib/day";
@@ -11,13 +11,20 @@ import {
   type ChurchEvent,
   type Season,
 } from "../lib/anchors";
-import { useAnchorLog, useCheckAnchor, useCheckChurch } from "../lib/queries";
+import {
+  flushOutbox,
+  useAnchorLog,
+  useCheckAnchor,
+  useCheckChurch,
+  useMoneyTreeVideoCount,
+} from "../lib/queries";
 import { useGrowth } from "../lib/stats";
 import { useAuth } from "../lib/auth";
 import { supabaseConfigured } from "../lib/supabase";
 import { QuietTimeGate, quietStartedAt } from "../components/QuietTimeGate";
 import { CeremonyGate } from "../components/CeremonyGate";
-import { useCrew } from "../lib/crewQueries";
+import { useAdvanceSkill, useCrew, useGrace } from "../lib/crewQueries";
+import { SKILL_DECK } from "../lib/crew";
 import { useCompleteTask, useDayPlan, useOpenTasks, type DsTask } from "../lib/tasksQueries";
 import type { PlanSlot } from "../lib/planner";
 import { awardCustom, DS_XP } from "../lib/xp";
@@ -123,6 +130,9 @@ export function Today() {
   const checkAnchor = useCheckAnchor(day);
   const checkChurch = useCheckChurch(day);
   const growth = useGrowth();
+  const { aboard, state: crewState } = useCrew();
+  const { left: graceLeft, grace } = useGrace();
+  const advanceSkill = useAdvanceSkill();
 
   // Task/skill slots from the plan approved at last night's ceremony.
   const planQ = useDayPlan(day);
@@ -133,18 +143,19 @@ export function Today() {
       (s) => s.kind === "task" || s.kind === "skill"
     );
     const open = new Map((openTasksQ.data ?? []).map((t) => [t.id, t]));
+    const skillCard = SKILL_DECK[(crewState?.skillPointer ?? 0) % SKILL_DECK.length];
     return slots.map((s) => ({
       key: `plan_${s.refId}`,
       kind: s.kind === "task" ? ("task" as const) : ("skill" as const),
-      title: s.title,
-      emoji: s.emoji,
+      title: s.kind === "skill" ? skillCard.title : s.title,
+      emoji: s.kind === "skill" ? skillCard.emoji : s.emoji,
       startMin: s.startMin,
       endMin: s.endMin,
       fixed: true,
       required: false,
       task: s.kind === "task" ? open.get(s.refId.split("#")[0]) : undefined,
     }));
-  }, [planQ.data, openTasksQ.data]);
+  }, [planQ.data, openTasksQ.data, crewState?.skillPointer]);
 
   const allItems = useMemo(
     () => [...items, ...planItems].sort((x, y) => daySortKey(x.startMin) - daySortKey(y.startMin)),
@@ -153,11 +164,39 @@ export function Today() {
 
   const [quietOpen, setQuietOpen] = useState(false);
   const [ceremonyOpen, setCeremonyOpen] = useState(false);
-  const { aboard } = useCrew();
+  const [graceFor, setGraceFor] = useState<{ slug: string; title: string } | null>(null);
+  const [graceReason, setGraceReason] = useState("");
+  const [flash, setFlash] = useState<string | null>(null);
   useEffect(() => {
     // resume a quiet time that was running before a reload
     if (quietStartedAt() !== null) setQuietOpen(true);
   }, []);
+
+  // Offline outbox: sync anything checked while at sea.
+  useEffect(() => {
+    void flushOutbox();
+    const onOnline = () => void flushOutbox();
+    window.addEventListener("online", onOnline);
+    return () => window.removeEventListener("online", onOnline);
+  }, []);
+
+  // MoneyTree auto-detect: Robin notices the 3 videos on her own.
+  const mtDone = !!log["money_tree"];
+  const mtCountQ = useMoneyTreeVideoCount(day, logQ.isSuccess && !mtDone);
+  const mtAuto = useRef(false);
+  useEffect(() => {
+    if (mtAuto.current || mtDone || !logQ.isSuccess) return;
+    if ((mtCountQ.data ?? 0) >= 3) {
+      const def = items.find((i) => i.key === "money_tree")?.anchor;
+      if (def) {
+        mtAuto.current = true;
+        checkAnchor.mutate({ def, meta: { auto: true, videos: mtCountQ.data } });
+        setFlash("🌳 Robin saw you finish your Money Tree videos — logged for you.");
+        window.setTimeout(() => setFlash(null), 5000);
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mtCountQ.data, mtDone, logQ.isSuccess]);
 
   const required = useMemo(() => {
     const slugs = requiredSlugs(day, SEASON);
@@ -216,6 +255,7 @@ export function Today() {
         <div className="mt-3 flex items-center justify-between rounded-2xl bg-sky-800/70 px-3 py-2">
           <span className="text-xs font-bold text-sky-200">
             {isSunday ? "Rest day" : "Required today"}
+            {session && <span className="ml-2 text-sky-300">🕊️ {graceLeft} grace</span>}
           </span>
           <span className="text-sm font-black text-amber-300">
             {doneRequired}/{required.length}
@@ -223,6 +263,12 @@ export function Today() {
           </span>
         </div>
       </div>
+
+      {flash && (
+        <div className="pop-in rounded-3xl bg-sky-900 px-4 py-3 text-center text-sm font-black text-amber-300 shadow-md">
+          {flash}
+        </div>
+      )}
 
       {session && aboard.length > 0 && (
         <Link
@@ -289,12 +335,14 @@ export function Today() {
       {/* Timeline */}
       <div className="space-y-2">
         {allItems.map((item) => {
+          const entry = item.kind === "anchor" || item.kind === "church" ? log[item.key] : undefined;
+          const excused = entry?.status === "grace";
           const done =
             item.kind === "task"
               ? openTasksQ.isSuccess && !item.task
               : item.kind === "skill"
                 ? !!log["skill_block"]
-                : !!log[item.key];
+                : !!entry;
           const activeNow =
             item.fixed &&
             item.endMin !== undefined &&
@@ -334,7 +382,14 @@ export function Today() {
               <div className="min-w-0 flex-1">
                 <div className="flex items-center gap-1.5 text-sm font-black text-stone-800">
                   <span>{item.emoji}</span>
-                  <span className={done ? "line-through decoration-2" : ""}>{item.title}</span>
+                  <span className={done && !excused ? "line-through decoration-2" : ""}>
+                    {item.title}
+                  </span>
+                  {excused && (
+                    <span className="rounded-full bg-sky-50 px-1.5 text-[9px] font-black text-sky-500">
+                      EXCUSED
+                    </span>
+                  )}
                   {bonus && (
                     <span className="rounded-full bg-stone-100 px-1.5 text-[9px] font-black text-stone-400">
                       BONUS
@@ -345,11 +400,11 @@ export function Today() {
                   <p className="mt-0.5 text-[11px] font-semibold text-stone-400">{item.hint}</p>
                 )}
               </div>
-              <div className="shrink-0">
+              <div className="flex shrink-0 flex-col items-end gap-1">
                 {item.kind === "rest" ? (
                   <span className="text-xl">😴</span>
                 ) : done ? (
-                  <span className="text-xl">✅</span>
+                  <span className="text-xl">{excused ? "🕊️" : "✅"}</span>
                 ) : item.kind === "task" ? (
                   <button
                     disabled={!session || completeTask.isPending || !item.task}
@@ -361,7 +416,9 @@ export function Today() {
                 ) : item.kind === "skill" ? (
                   <button
                     disabled={!session || checkAnchor.isPending}
-                    onClick={() => checkAnchor.mutate({ def: SKILL_BLOCK_DEF })}
+                    onClick={() =>
+                      checkAnchor.mutate({ def: SKILL_BLOCK_DEF }, { onSuccess: () => advanceSkill() })
+                    }
                     className="rounded-full bg-amber-400 px-3 py-1.5 text-xs font-black text-sky-950 transition enabled:hover:bg-amber-300 disabled:opacity-30"
                   >
                     +15 XP
@@ -397,11 +454,74 @@ export function Today() {
                     +{item.xp} XP
                   </button>
                 )}
+                {!done &&
+                  session &&
+                  graceLeft > 0 &&
+                  (item.kind === "anchor" || item.kind === "church") &&
+                  item.anchor?.kind !== "ceremony" && (
+                    <button
+                      onClick={() => {
+                        setGraceFor({ slug: item.key, title: item.title });
+                        setGraceReason("");
+                      }}
+                      className="text-[9px] font-black text-stone-300 hover:text-sky-500"
+                    >
+                      🕊️ can't today
+                    </button>
+                  )}
               </div>
             </div>
           );
         })}
       </div>
+
+      {graceFor && (
+        <div className="fixed inset-0 z-50 flex items-end justify-center bg-sky-950/80 p-4 sm:items-center">
+          <div className="w-full max-w-sm rounded-3xl bg-white p-5 shadow-xl">
+            <h2 className="text-sm font-black text-sky-900">🕊️ Grace for “{graceFor.title}”</h2>
+            <p className="mt-1 text-xs font-semibold text-stone-400">
+              {graceLeft} token{graceLeft !== 1 ? "s" : ""} left this week. No XP — but no one gets
+              sad either. Honesty first: what's the real reason?
+            </p>
+            <textarea
+              value={graceReason}
+              onChange={(e) => setGraceReason(e.target.value)}
+              rows={2}
+              autoFocus
+              placeholder="e.g. Not home at noon — department outing ran long"
+              className="mt-3 w-full rounded-2xl bg-stone-50 p-3 text-sm font-semibold focus:outline-none focus:ring-2 focus:ring-sky-400"
+            />
+            <button
+              disabled={grace.isPending}
+              onClick={() =>
+                grace.mutate(
+                  { slug: graceFor.slug, reason: graceReason },
+                  {
+                    onSuccess: () => {
+                      setGraceFor(null);
+                      setFlash("🕊️ Excused. The crew understands — this time.");
+                      window.setTimeout(() => setFlash(null), 4000);
+                    },
+                    onError: (e) => {
+                      setFlash(e instanceof Error ? e.message : "Couldn't apply grace.");
+                      window.setTimeout(() => setFlash(null), 4000);
+                    },
+                  }
+                )
+              }
+              className="mt-3 w-full rounded-full bg-sky-900 py-2.5 text-sm font-black text-white transition enabled:hover:bg-sky-800 disabled:opacity-40"
+            >
+              Use a grace token
+            </button>
+            <button
+              onClick={() => setGraceFor(null)}
+              className="mt-2 w-full text-center text-xs font-bold text-stone-400"
+            >
+              Never mind — I'll still do it
+            </button>
+          </div>
+        </div>
+      )}
 
       <p className="pb-4 text-center text-xs font-bold text-stone-400">
         ⚓ The crew never pays XP. Your real day pays the crew.

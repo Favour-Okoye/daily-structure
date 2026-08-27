@@ -102,6 +102,12 @@ export interface CrewState {
   comebackDone: boolean;
   pendingRecruit: CharId | null;
   pendingReunion: CharId | null;
+  /** Grace tokens: 2 per ISO week, spent with a typed reason. */
+  grace: { weekKey: string; used: number };
+  /** This week's self-picked goals (settled the following week). */
+  weekly: { weekKey: string; picks: string[]; settled: boolean } | null;
+  settledGoalWeeks: number;
+  skillPointer: number;
   log: { day: string; text: string }[];
 }
 
@@ -148,9 +154,60 @@ export function normalizeCrew(raw: unknown, today: string): CrewState {
     comebackDone: r.comebackDone ?? false,
     pendingRecruit: r.pendingRecruit ?? null,
     pendingReunion: r.pendingReunion ?? null,
+    grace: r.grace ?? { weekKey: "", used: 0 },
+    weekly: r.weekly ?? null,
+    settledGoalWeeks: r.settledGoalWeeks ?? 0,
+    skillPointer: r.skillPointer ?? 0,
     log: (r.log ?? []).slice(0, 60),
   };
 }
+
+/* ------------------------------------------------------------------ */
+/* Grace tokens                                                        */
+/* ------------------------------------------------------------------ */
+
+export const GRACE_PER_WEEK = 2;
+
+/* ------------------------------------------------------------------ */
+/* Skill deck (rotates via skillPointer)                               */
+/* ------------------------------------------------------------------ */
+
+export interface SkillCard {
+  id: string;
+  title: string;
+  emoji: string;
+}
+
+export const SKILL_DECK: SkillCard[] = [
+  { id: "speak_aloud", title: "Record yourself talking 5 min about today's reading", emoji: "🎙️" },
+  { id: "sql_drill", title: "Solve 2 SQL practice exercises", emoji: "🗄️" },
+  { id: "ai_new", title: "Try one new AI thing you've never tried", emoji: "🤖" },
+  { id: "sell_pitch", title: "Write a 5-line pitch selling anything to anyone", emoji: "🛍️" },
+  { id: "powerbi_drill", title: "Recreate one chart in Power BI or Excel", emoji: "📊" },
+  { id: "yt_skill", title: "Watch one skill video (speaking, selling, data)", emoji: "🎬" },
+  { id: "dataviz_read", title: "Read one article on data storytelling", emoji: "📈" },
+];
+
+/* ------------------------------------------------------------------ */
+/* Weekly goals (pick 2, settled next week)                            */
+/* ------------------------------------------------------------------ */
+
+export interface GoalDef {
+  id: string;
+  title: string;
+  emoji: string;
+}
+
+export const GOALS_DECK: GoalDef[] = [
+  { id: "dev6", title: "Devotional every weekday (6/6)", emoji: "📖" },
+  { id: "workouts3", title: "3 workouts with your sister", emoji: "💪" },
+  { id: "quiet5", title: "5 quiet times", emoji: "🌊" },
+  { id: "apps2", title: "2 job applications sent", emoji: "📨" },
+  { id: "zero_overdue", title: "Zero overdue tasks at week's end", emoji: "🗺️" },
+  { id: "book5", title: "Book reading on 5 days", emoji: "📗" },
+  { id: "church4", title: "4+ church events attended", emoji: "⛪" },
+  { id: "perfect2", title: "2 perfect days", emoji: "🏴‍☠️" },
+];
 
 /* ------------------------------------------------------------------ */
 /* Mapping log rows → areas                                            */

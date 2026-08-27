@@ -8,17 +8,21 @@ import type { CharId, Mood } from "../../lib/crew";
 
 type Prop = "strawHat" | "swords" | "earrings" | "scar" | "haramaki" | "staff"
   | "longNose" | "whiskers" | "lowerMask" | "antlerHat" | "book" | "curlyBrow"
-  | "bandana" | "vest" | "sailorTop";
+  | "bandana" | "vest" | "sailorTop" | "deerNose" | "straps" | "neckBand" | "hairbandTop";
 
 interface ChibiConfig {
   skin: string;
   hair: string;
-  hairStyle: "spiky" | "buzz" | "long";
+  hairStyle: "spiky" | "buzz" | "long" | "hime" | "bob";
   top: string;
   sleeves?: string;
   pants: string;
   shoes: string;
   headband?: string;
+  /** Iris color (canon eyes!). Defaults to warm brown. */
+  iris?: string;
+  /** "byakugan" = Hinata's pale lavender eyes. */
+  eyeStyle?: "byakugan";
   props: Prop[];
   /** Aura colors per level, index = level-2. */
   aura?: string[];
@@ -32,7 +36,7 @@ const CONFIG: Record<CharId, ChibiConfig> = {
   },
   zoro: {
     skin: "#f5d3a5", hair: "#22c55e", hairStyle: "buzz",
-    top: "#f1f5f9", pants: "#14532d", shoes: "#1c1917",
+    top: "#f1f5f9", pants: "#14532d", shoes: "#1c1917", iris: "#15803d",
     props: ["bandana", "haramaki", "swords", "earrings"], aura: ["#86efac", "#22c55e"],
   },
   nami: {
@@ -47,52 +51,67 @@ const CONFIG: Record<CharId, ChibiConfig> = {
   },
   sanji: {
     skin: "#fde3c5", hair: "#fcd34d", hairStyle: "buzz",
-    top: "#1e293b", pants: "#1e293b", shoes: "#1c1917",
+    top: "#1e293b", pants: "#1e293b", shoes: "#1c1917", iris: "#3b82f6",
     props: ["curlyBrow"], aura: ["#fb923c", "#f97316"],
   },
   chopper: {
-    skin: "#f2c299", hair: "#92400e", hairStyle: "buzz",
-    top: "#ec4899", pants: "#9d174d", shoes: "#4c0519",
-    props: ["antlerHat"], aura: ["#f9a8d4", "#ec4899"],
+    // little reindeer: fur, tall pink X-hat, antlers, backpack straps
+    skin: "#dfa568", hair: "#c98547", hairStyle: "buzz",
+    top: "#dfa568", pants: "#9d174d", shoes: "#78350f",
+    props: ["antlerHat", "deerNose", "straps"], aura: ["#f9a8d4", "#ec4899"],
   },
   robin: {
     skin: "#fbd8b0", hair: "#312e81", hairStyle: "long",
-    top: "#8b5cf6", sleeves: "#fbd8b0", pants: "#4c1d95", shoes: "#1c1917",
+    top: "#8b5cf6", sleeves: "#fbd8b0", pants: "#4c1d95", shoes: "#1c1917", iris: "#3b82f6",
     props: ["book"], aura: ["#c4b5fd", "#8b5cf6"],
   },
   naruto: {
     skin: "#fde3c5", hair: "#fde047", hairStyle: "spiky",
-    top: "#fb923c", pants: "#fb923c", shoes: "#1e40af",
+    top: "#fb923c", pants: "#fb923c", shoes: "#1e40af", iris: "#2563eb",
     headband: "#3b82f6", props: ["whiskers"], aura: ["#fdba74", "#fb923c", "#fde047"],
   },
   sasuke: {
     skin: "#fbd8b0", hair: "#334155", hairStyle: "spiky",
-    top: "#1e3a8a", pants: "#e7e5e4", shoes: "#1c1917",
+    top: "#1e3a8a", pants: "#e7e5e4", shoes: "#1c1917", iris: "#1f2937",
     headband: "#475569", props: [], aura: ["#a5b4fc", "#6366f1"],
   },
   sakura: {
-    skin: "#fde3c5", hair: "#fbcfe8", hairStyle: "long",
-    top: "#ef4444", sleeves: "#fde3c5", pants: "#fdf2f8", shoes: "#7f1d1d",
-    headband: "#ef4444", props: [], aura: ["#fbcfe8", "#f472b6"],
+    // pink bob, red hairband ON the hair, green eyes — her reference exactly
+    skin: "#fde3c5", hair: "#f9b8cf", hairStyle: "bob",
+    top: "#ef4444", sleeves: "#fde3c5", pants: "#fdf2f8", shoes: "#7f1d1d", iris: "#16a34a",
+    props: ["hairbandTop"], aura: ["#fbcfe8", "#f472b6"],
   },
   kakashi: {
     skin: "#fbd8b0", hair: "#e2e8f0", hairStyle: "spiky",
-    top: "#475569", pants: "#475569", shoes: "#1c1917",
+    top: "#475569", pants: "#475569", shoes: "#1c1917", iris: "#475569",
     headband: "#334155", props: ["lowerMask"], aura: ["#e0f2fe", "#7dd3fc"],
   },
   hinata: {
-    skin: "#fde3c5", hair: "#3730a3", hairStyle: "long",
-    top: "#c7d2fe", sleeves: "#c7d2fe", pants: "#312e81", shoes: "#1c1917",
-    props: [], aura: ["#e0e7ff", "#a5b4fc"],
+    // hime-cut navy hair, pale Byakugan eyes, cream-and-lavender jacket, leaf band at the neck
+    skin: "#fde3c5", hair: "#27275e", hairStyle: "hime",
+    top: "#b3a1d6", sleeves: "#e8e0cf", pants: "#312e81", shoes: "#1c1917",
+    eyeStyle: "byakugan",
+    props: ["neckBand"], aura: ["#e0e7ff", "#a5b4fc"],
   },
 };
 
-/** Big warm brown anime eye — dark rim, amber iris, deep pupil, double glints. */
-function Eye({ cx }: { cx: number }) {
+/** Big anime eye — dark rim, colored iris, deep pupil, double glints.
+ *  eyeStyle "byakugan" = Hinata's pale lavender, nearly pupil-less. */
+function Eye({ cx, iris = "#92400e", style }: { cx: number; iris?: string; style?: "byakugan" }) {
+  if (style === "byakugan") {
+    return (
+      <g>
+        <ellipse cx={cx} cy={62} rx={6.8} ry={8.4} fill="#ede9fe" stroke="#818cf8" strokeWidth="1.4" />
+        <ellipse cx={cx} cy={63} rx={4.4} ry={5.6} fill="#ddd6fe" />
+        <ellipse cx={cx} cy={64} rx={1.6} ry={2} fill="#a5b4fc" />
+        <circle cx={cx + 2.2} cy={58.6} r={2.4} fill="#ffffff" />
+      </g>
+    );
+  }
   return (
     <g>
       <ellipse cx={cx} cy={62} rx={6.8} ry={8.4} fill="#2b1708" />
-      <ellipse cx={cx} cy={63.5} rx={4.8} ry={5.8} fill="#92400e" />
+      <ellipse cx={cx} cy={63.5} rx={4.8} ry={5.8} fill={iris} />
       <ellipse cx={cx} cy={65.5} rx={2.7} ry={3.1} fill="#2b1708" />
       <circle cx={cx + 2.3} cy={58.4} r={2.7} fill="#ffffff" />
       <circle cx={cx - 2.7} cy={66} r={1.3} fill="#ffffff" opacity="0.95" />
@@ -109,7 +128,7 @@ function Blush() {
   );
 }
 
-function Face({ mood }: { mood: Mood }) {
+function Face({ mood, iris, eyeStyle }: { mood: Mood; iris?: string; eyeStyle?: "byakugan" }) {
   switch (mood) {
     case "happy":
       return (
@@ -124,8 +143,8 @@ function Face({ mood }: { mood: Mood }) {
     case "neutral":
       return (
         <g>
-          <Eye cx={45} />
-          <Eye cx={75} />
+          <Eye cx={45} iris={iris} style={eyeStyle} />
+          <Eye cx={75} iris={iris} style={eyeStyle} />
           {/* the ω cat-mouth — peak kawaii */}
           <path d="M53 72.5 q3.5 4 7 0 q3.5 4 7 0" fill="none" stroke="#292524" strokeWidth="2.6" strokeLinecap="round" />
           <Blush />
@@ -136,8 +155,8 @@ function Face({ mood }: { mood: Mood }) {
         <g>
           <path d="M35 49 l15 4.5" stroke="#292524" strokeWidth="2.8" strokeLinecap="round" />
           <path d="M85 49 l-15 4.5" stroke="#292524" strokeWidth="2.8" strokeLinecap="round" />
-          <Eye cx={45} />
-          <Eye cx={75} />
+          <Eye cx={45} iris={iris} style={eyeStyle} />
+          <Eye cx={75} iris={iris} style={eyeStyle} />
           <path d="M52 74 q4 -4 8 0 q4 4 8 0" fill="none" stroke="#292524" strokeWidth="2.8" strokeLinecap="round" />
           <path d="M94 46 q4.5 7 0 10.5 q-4.5 -3.5 0 -10.5" fill="#38bdf8" />
           <Blush />
@@ -155,7 +174,7 @@ function Face({ mood }: { mood: Mood }) {
         </g>
       );
     default:
-      return <Face mood="neutral" />;
+      return <Face mood="neutral" iris={iris} eyeStyle={eyeStyle} />;
   }
 }
 
@@ -181,6 +200,30 @@ function Hair({ style, color }: { style: ChibiConfig["hairStyle"]; color: string
             d="M22 55 a38 36 0 0 1 76 0 l-6 -6 -7 12 -8 -12 -9 13 -9 -13 -8 12 -7 -12 -6 6 z"
             fill={color}
           />
+        </g>
+      );
+    case "hime":
+      // Hinata: long straight curtains + blunt straight-cut bangs + front strands
+      return (
+        <g>
+          <path d="M20 50 q-7 40 3 58 l14 -6 q-7 -22 -4 -44 z" fill={color} />
+          <path d="M100 50 q7 40 -3 58 l-14 -6 q7 -22 4 -44 z" fill={color} />
+          <path d="M23 52 a37 33 0 0 1 74 0 l-3 -1 0 -3 -68 0 0 3 z" fill={color} />
+          <rect x={23} y={44} width={74} height={7} fill={color} />
+          <path d="M23 44 l74 0 0 5 q-37 4 -74 0 z" fill={color} />
+          <rect x={29} y={48} width={7} height={34} rx={3.5} fill={color} />
+          <rect x={84} y={48} width={7} height={34} rx={3.5} fill={color} />
+        </g>
+      );
+    case "bob":
+      // Sakura: short bob, centre-parted bangs sweeping to the sides
+      return (
+        <g>
+          <path d="M22 54 q-5 26 3 38 l11 -6 q-5 -14 -2 -30 z" fill={color} />
+          <path d="M98 54 q5 26 -3 38 l-11 -6 q5 -14 2 -30 z" fill={color} />
+          <path d="M22 55 a38 36 0 0 1 76 0 l-2 -2 -72 0 z" fill={color} />
+          <path d="M60 22 q-22 2 -33 18 q7 13 15 13 q7 -18 18 -31 z" fill={color} />
+          <path d="M60 22 q22 2 33 18 q-7 13 -15 13 q-7 -18 -18 -31 z" fill={color} />
         </g>
       );
   }
@@ -256,15 +299,43 @@ function Props({ config }: { config: ChibiConfig }) {
         <path d="M66 47 q9 -4.5 13.5 2 q-5.5 -1 -8 2.5" fill="none" stroke="#92400e" strokeWidth="2.4" strokeLinecap="round" />
       )}
       {has("antlerHat") && (
+        // Chopper's tall pink top hat with the white X — antlers out the sides
         <g>
-          <path d="M24 38 a37 27 0 0 1 72 0 l0 7 -72 0 z" fill="#ec4899" />
-          <rect x={24} y={40} width={72} height={7} fill="#f8fafc" />
-          <g stroke="#78350f" strokeWidth="4.5" strokeLinecap="round" fill="none">
-            <path d="M27 30 q-9 -9 -7 -20 M27 30 q-11 0 -16 -7" />
-            <path d="M93 30 q9 -9 7 -20 M93 30 q11 0 16 -7" />
+          <g stroke="#92400e" strokeWidth="5" strokeLinecap="round" fill="none">
+            <path d="M32 34 q-12 -6 -14 -20 M32 34 q-16 0 -24 -8" />
+            <path d="M88 34 q12 -6 14 -20 M88 34 q16 0 24 -8" />
           </g>
-          <ellipse cx={60} cy={67} rx={4.5} ry={4} fill="#3b82f6" />
-          <circle cx={58.5} cy={65.5} r={1.3} fill="#93c5fd" />
+          <rect x={32} y={5} width={56} height={30} rx={9} fill="#ec4899" stroke="#be185d" strokeWidth="2" />
+          <path d="M52 12 l16 16 M68 12 l-16 16" stroke="#ffffff" strokeWidth="5.5" strokeLinecap="round" />
+          <ellipse cx={60} cy={36} rx={37} ry={9} fill="#f472b6" stroke="#be185d" strokeWidth="2" />
+          <circle cx={25} cy={49} r={6.5} fill="#dfa568" />
+          <circle cx={95} cy={49} r={6.5} fill="#dfa568" />
+          <circle cx={25} cy={49} r={3} fill="#f9a8d4" opacity="0.7" />
+          <circle cx={95} cy={49} r={3} fill="#f9a8d4" opacity="0.7" />
+        </g>
+      )}
+      {has("deerNose") && <ellipse cx={60} cy={65} rx={3} ry={2.3} fill="#78350f" />}
+      {has("straps") && (
+        <g stroke="#3b82f6" strokeWidth="4" strokeLinecap="round">
+          <path d="M49 93 l5 13" />
+          <path d="M71 93 l-5 13" />
+        </g>
+      )}
+      {has("neckBand") && (
+        // forehead protector worn at the neck, Hinata-style
+        <g>
+          <rect x={44} y={87} width={32} height={7} rx={3.5} fill="#334155" />
+          <rect x={53} y={85.5} width={14} height={10} rx={2} fill="#cbd5e1" stroke="#64748b" strokeWidth="1" />
+          <path d="M57 91 q3 -3.5 6 0" fill="none" stroke="#475569" strokeWidth="1.4" />
+        </g>
+      )}
+      {has("hairbandTop") && (
+        // red hairband sitting ON the hair with the plate up top
+        <g>
+          <path d="M26 40 a36 29 0 0 1 68 0 l0 8 a36 29 0 0 0 -68 0 z" fill="#dc2626" />
+          <rect x={50} y={30} width={20} height={11} rx={2.5} fill="#e5e7eb" stroke="#6b7280" strokeWidth="1" />
+          <path d="M55 36 q5 -4 10 0" fill="none" stroke="#6b7280" strokeWidth="1.4" />
+          <path d="M92 44 l10 -4 -3 8 7 0 -7 7 z" fill="#dc2626" />
         </g>
       )}
       {has("book") && (
@@ -371,7 +442,7 @@ export function Chibi({
         {/* HUGE head — the kawaii law */}
         <circle cx={60} cy={56} r={38} fill={config.skin} />
         <Hair style={config.hairStyle} color={config.hair} />
-        <Face mood={mood} />
+        <Face mood={mood} iris={config.iris} eyeStyle={config.eyeStyle} />
         <Props config={config} />
         {mood === "packing" && <Bindle />}
       </g>

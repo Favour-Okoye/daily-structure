@@ -106,6 +106,21 @@ export function useSettings() {
   });
 }
 
+export function useSaveSettingsData() {
+  const { session } = useAuth();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (data: Record<string, unknown>) => {
+      if (!supabase) throw new Error("not connected");
+      const { error } = await supabase
+        .from("ds_settings")
+        .upsert({ user_id: session?.user.id, data }, { onConflict: "user_id" });
+      if (error) throw error;
+    },
+    onSuccess: () => void qc.invalidateQueries({ queryKey: ["ds_settings", session?.user.id] }),
+  });
+}
+
 export function useSaveConfession() {
   const { session } = useAuth();
   const qc = useQueryClient();

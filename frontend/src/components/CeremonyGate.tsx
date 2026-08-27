@@ -1,8 +1,10 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { appDay, daySortKey, fmtMin, shiftDay } from "../lib/day";
-import { anchorsForDay, churchForDay, REST_BLOCK, type Season } from "../lib/anchors";
+import { type Season } from "../lib/anchors";
+import { buildPlan, type DayPlan } from "../lib/planner";
 import { useSettings } from "../lib/queries";
 import { useApprovePlan, useCrew } from "../lib/crewQueries";
+import { useEvents, useOpenTasks } from "../lib/tasksQueries";
 import { useXpDays } from "../lib/stats";
 import { Chibi } from "./chibi/Chibi";
 
@@ -50,51 +52,63 @@ export function CeremonyGate({
 
   const xpToday = (xpDaysQ.data ?? []).find((d) => d.happened_on === day)?.points ?? 0;
 
-  const plan = useMemo(() => {
-    const slots: {
-      kind: string;
-      refId: string;
-      title: string;
-      emoji: string;
-      startMin: number;
-      endMin: number | null;
-      locked: boolean;
-    }[] = [];
-    for (const e of churchForDay(tomorrow)) {
-      slots.push({
-        kind: "event",
-        refId: e.slug,
-        title: e.title,
-        emoji: e.emoji,
-        startMin: e.startMin,
-        endMin: e.endMin,
-        locked: true,
-      });
-    }
-    slots.push({
-      kind: "rest",
-      refId: "rest",
-      title: "Rest — protected",
-      emoji: REST_BLOCK.emoji,
-      startMin: REST_BLOCK.startMin,
-      endMin: REST_BLOCK.endMin,
-      locked: true,
-    });
-    for (const a of anchorsForDay(tomorrow, SEASON)) {
-      if (!a.required) continue;
-      slots.push({
-        kind: "anchor",
-        refId: a.slug,
-        title: a.title,
-        emoji: a.emoji,
-        startMin: a.startMin ?? a.suggestMin ?? 9 * 60,
-        endMin: a.endMin ?? null,
-        locked: a.startMin !== undefined,
-      });
-    }
-    slots.sort((x, y) => daySortKey(x.startMin) - daySortKey(y.startMin));
-    return { version: 1, day: tomorrow, season: SEASON, slots, unplaced: [] };
-  }, [tomorrow]);
+  const tasksQ = useOpenTasks();
+  const eventsQ = useEvents();
+  const fridayOnline = !!(settingsQ.data?.data as { fridayOnline?: boolean } | undefined)?.fridayOnline;
+
+  const built = useMemo(() => {
+    const tasks = (tasksQ.data ?? []).map((t) => ({
+      id: t.id,
+      title: t.title,
+      kind: t.kind,
+      due_on: t.due_on,
+      est_minutes: t.est_minutes,
+    }));
+    const events = (eventsQ.data ?? [])
+      .filter((e) => e.day === tomorrow)
+      .map((e) => ({ id: e.id, title: e.title, day: e.day, start_min: e.start_min, end_min: e.end_min }));
+    return buildPlan(tomorrow, SEASON, tasks, events, { fridayOnline });
+  }, [tomorrow, tasksQ.data, eventsQ.data, fridayOnline]);
+
+  // Local adjustable copy — Nami proposes, Favour disposes.
+  const [plan, setPlan] = useState<DayPlan | null>(null);
+  useEffect(() => {
+    if (stage === "tomorrow" && plan === null) setPlan(built);
+  }, [stage, built, plan]);
+
+  const shiftSlot = (refId: string, delta: number) => {
+    setPlan((p) =>
+      p
+        ? {
+            ...p,
+            slots: p.slots.map((s) =>
+              s.refId === refId && !s.locked
+                ? {
+                    ...s,
+                    startMin: Math.max(0, Math.min(1439, s.startMin + delta)),
+                    endMin: Math.max(0, Math.min(1439, s.endMin + delta)),
+                  }
+                : s
+            ),
+          }
+        : p
+    );
+  };
+
+  const removeSlot = (refId: string, title: string) => {
+    setPlan((p) =>
+      p
+        ? {
+            ...p,
+            slots: p.slots.filter((s) => s.refId !== refId),
+            unplaced: [
+              ...p.unplaced,
+              { taskId: refId.split("#")[0], title, reason: "Removed by you — sails another day" },
+            ],
+          }
+        : p
+    );
+  };
 
   const nami = aboard.find((c) => c.id === "nami");
 
@@ -187,25 +201,65 @@ export function CeremonyGate({
               </div>
             </div>
             <div className="mt-3 space-y-1.5">
-              {plan.slots.map((s) => (
-                <div
-                  key={s.refId}
-                  className="flex items-center gap-3 rounded-2xl bg-sky-900/70 px-3 py-2"
-                >
-                  <span className="w-24 shrink-0 text-[11px] font-black text-sky-300">
-                    {s.endMin !== null
-                      ? `${fmtMin(s.startMin)}–${fmtMin(s.endMin)}`
-                      : `~${fmtMin(s.startMin)}`}
-                  </span>
-                  <span className="text-sm">{s.emoji}</span>
-                  <span className="flex-1 text-xs font-bold text-sky-50">{s.title}</span>
-                  {s.locked && <span className="text-[9px] font-black text-sky-500">FIXED</span>}
-                </div>
-              ))}
+              {(plan?.slots ?? [])
+                .slice()
+                .sort((a, b) => daySortKey(a.startMin) - daySortKey(b.startMin))
+                .map((s) => (
+                  <div
+                    key={s.refId}
+                    className={`flex items-center gap-2 rounded-2xl px-3 py-2 ${
+                      s.kind === "task" ? "bg-amber-400/15" : "bg-sky-900/70"
+                    }`}
+                  >
+                    <span className="w-[5.5rem] shrink-0 text-[11px] font-black text-sky-300">
+                      {fmtMin(s.startMin)}–{fmtMin(s.endMin)}
+                    </span>
+                    <span className="text-sm">{s.emoji}</span>
+                    <span className="flex-1 text-xs font-bold text-sky-50">{s.title}</span>
+                    {s.locked ? (
+                      <span className="text-[9px] font-black text-sky-500">FIXED</span>
+                    ) : s.kind === "task" || s.kind === "skill" ? (
+                      <span className="flex shrink-0 items-center gap-1">
+                        <button
+                          onClick={() => shiftSlot(s.refId, -15)}
+                          className="rounded-full bg-sky-800 px-1.5 text-[10px] font-black text-sky-200"
+                          title="15 minutes earlier"
+                        >
+                          ◂
+                        </button>
+                        <button
+                          onClick={() => shiftSlot(s.refId, 15)}
+                          className="rounded-full bg-sky-800 px-1.5 text-[10px] font-black text-sky-200"
+                          title="15 minutes later"
+                        >
+                          ▸
+                        </button>
+                        <button
+                          onClick={() => removeSlot(s.refId, s.title)}
+                          className="rounded-full bg-sky-800 px-1.5 text-[10px] font-black text-rose-300"
+                          title="Remove from tomorrow"
+                        >
+                          ✕
+                        </button>
+                      </span>
+                    ) : null}
+                  </div>
+                ))}
             </div>
+            {(plan?.unplaced.length ?? 0) > 0 && (
+              <div className="mt-3 rounded-2xl bg-sky-900/50 p-3">
+                <p className="text-[10px] font-black text-sky-400">DIDN'T FIT TOMORROW</p>
+                {plan!.unplaced.map((u) => (
+                  <p key={u.taskId + u.reason} className="mt-1 text-xs font-semibold text-sky-200">
+                    • {u.title} — <span className="text-sky-400">{u.reason}</span>
+                  </p>
+                ))}
+              </div>
+            )}
             <button
-              disabled={approve.isPending}
+              disabled={approve.isPending || !plan}
               onClick={() =>
+                plan &&
                 approve.mutate(
                   { day: tomorrow, plan },
                   {

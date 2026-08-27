@@ -7,7 +7,8 @@ import { Login } from "./pages/Login";
 import { More } from "./pages/More";
 import { Crew } from "./pages/Crew";
 import { ChibiLab } from "./pages/ChibiLab";
-import { TasksSoon, WeekSoon } from "./pages/ComingSoon";
+import { Tasks } from "./pages/Tasks";
+import { WeekSoon } from "./pages/ComingSoon";
 
 const queryClient = new QueryClient();
 
@@ -20,7 +21,7 @@ export default function App() {
             <Route element={<AppShell />}>
               <Route path="/" element={<Today />} />
               <Route path="/crew" element={<Crew />} />
-              <Route path="/tasks" element={<TasksSoon />} />
+              <Route path="/tasks" element={<Tasks />} />
               <Route path="/week" element={<WeekSoon />} />
               <Route path="/more" element={<More />} />
               <Route path="/login" element={<Login />} />

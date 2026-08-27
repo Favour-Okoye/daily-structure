@@ -20,6 +20,7 @@ import {
   type Mood,
 } from "./crew";
 import type { Season } from "./anchors";
+import { useOpenTasks } from "./tasksQueries";
 
 const SEASON: Season = "gap";
 
@@ -80,15 +81,25 @@ export interface CrewMember {
   recruited: boolean;
 }
 
+const MOOD_RANK: Mood[] = ["sad", "worried", "neutral", "happy"];
+function capMood(mood: Mood, cap: Mood): Mood {
+  const m = MOOD_RANK.indexOf(mood);
+  const c = MOOD_RANK.indexOf(cap);
+  if (m === -1 || c === -1) return mood;
+  return MOOD_RANK[Math.min(m, c)];
+}
+
 /** The living crew: moods and bonds computed from the anchor log. */
 export function useCrew() {
   const stateQ = useCrewState();
   const rowsQ = useAnchorRange();
+  const tasksQ = useOpenTasks();
   const today = appDay();
 
   const loading = stateQ.isLoading || rowsQ.isLoading;
   const state = stateQ.data?.state ?? null;
   const rows = rowsQ.data ?? [];
+  const overdue = (tasksQ.data ?? []).filter((t) => t.due_on && t.due_on < today).length;
 
   let crew: CrewMember[] = [];
   if (state) {
@@ -96,8 +107,10 @@ export function useCrew() {
     crew = ALL_CHARS.map((id) => {
       const c = state.characters[id];
       const area = CHAR_AREA[id];
-      const mood: Mood =
+      let mood: Mood =
         c.recruited && area ? areaMood(area, today, state.startedOn, SEASON, areaDays) : "neutral";
+      // Deadline worry is Nami's whole personality.
+      if (id === "nami" && overdue >= 1) mood = capMood(mood, overdue >= 3 ? "sad" : "worried");
       const bond = c.recruited ? bondOf(id, today, state, SEASON, areaDays, rows) : 0;
       return {
         id,
@@ -107,7 +120,10 @@ export function useCrew() {
         moodEmoji: MOOD_EMOJI[mood],
         bond,
         tier: bondTier(bond),
-        line: MOOD_LINES[id]?.[mood] ?? null,
+        line:
+          id === "nami" && overdue >= 1
+            ? `${overdue} overdue task${overdue > 1 ? "s" : ""}?! Clear the map — we don't sail with dead weight.`
+            : (MOOD_LINES[id]?.[mood] ?? null),
         recruited: c.recruited,
       };
     });

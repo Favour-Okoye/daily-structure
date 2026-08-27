@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { useAuth } from "../lib/auth";
 import { supabase } from "../lib/supabase";
-import { useSaveConfession, useSettings } from "../lib/queries";
+import { useSaveConfession, useSaveSettingsData, useSettings } from "../lib/queries";
 
 export function More() {
   const { session } = useAuth();
@@ -49,6 +49,8 @@ export function More() {
         </button>
       </div>
 
+      <FridayToggle />
+
       <div className="rounded-3xl bg-white p-4 shadow-sm ring-1 ring-sky-100">
         <h2 className="text-sm font-black text-sky-900">🧭 About</h2>
         <ul className="mt-2 space-y-1.5 text-xs font-semibold text-stone-500">
@@ -67,6 +69,42 @@ export function More() {
           Sign out (both apps)
         </button>
       )}
+    </div>
+  );
+}
+
+function FridayToggle() {
+  const { session } = useAuth();
+  const settingsQ = useSettings();
+  const save = useSaveSettingsData();
+  const data = (settingsQ.data?.data ?? {}) as { fridayOnline?: boolean };
+  const online = !!data.fridayOnline;
+  return (
+    <div className="rounded-3xl bg-white p-4 shadow-sm ring-1 ring-sky-100">
+      <h2 className="text-sm font-black text-sky-900">🙌 Friday prayers</h2>
+      <p className="mt-1 text-xs font-semibold text-stone-400">
+        In church (7-9pm, home ~10) or online (8-9pm)? The planner sails around it.
+      </p>
+      <div className="mt-2 flex gap-2">
+        <button
+          disabled={!session || save.isPending}
+          onClick={() => save.mutate({ ...data, fridayOnline: false })}
+          className={`flex-1 rounded-full py-2 text-xs font-black ${
+            !online ? "bg-sky-900 text-white" : "bg-stone-100 text-stone-500"
+          }`}
+        >
+          In church ⛪
+        </button>
+        <button
+          disabled={!session || save.isPending}
+          onClick={() => save.mutate({ ...data, fridayOnline: true })}
+          className={`flex-1 rounded-full py-2 text-xs font-black ${
+            online ? "bg-sky-900 text-white" : "bg-stone-100 text-stone-500"
+          }`}
+        >
+          Online 💻
+        </button>
+      </div>
     </div>
   );
 }

@@ -18,13 +18,26 @@ import { supabaseConfigured } from "../lib/supabase";
 import { QuietTimeGate, quietStartedAt } from "../components/QuietTimeGate";
 import { CeremonyGate } from "../components/CeremonyGate";
 import { useCrew } from "../lib/crewQueries";
+import { useCompleteTask, useDayPlan, useOpenTasks, type DsTask } from "../lib/tasksQueries";
+import type { PlanSlot } from "../lib/planner";
 import { awardCustom, DS_XP } from "../lib/xp";
+
+const SKILL_BLOCK_DEF = {
+  slug: "skill_block",
+  title: "Skill block",
+  emoji: "🎯",
+  xp: 15,
+  area: "skills",
+  kind: "check",
+  minutes: 15,
+  requiredOn: () => false,
+} as unknown as AnchorForDay;
 
 const SEASON: Season = "gap"; // the season switch ships in a later phase
 
 interface TimelineItem {
   key: string;
-  kind: "anchor" | "church" | "rest";
+  kind: "anchor" | "church" | "rest" | "task" | "skill";
   title: string;
   emoji: string;
   startMin: number;
@@ -35,6 +48,7 @@ interface TimelineItem {
   hint?: string;
   anchor?: AnchorForDay;
   church?: ChurchEvent;
+  task?: DsTask;
 }
 
 function fireConfetti() {
@@ -109,6 +123,33 @@ export function Today() {
   const checkAnchor = useCheckAnchor(day);
   const checkChurch = useCheckChurch(day);
   const growth = useGrowth();
+
+  // Task/skill slots from the plan approved at last night's ceremony.
+  const planQ = useDayPlan(day);
+  const openTasksQ = useOpenTasks();
+  const completeTask = useCompleteTask();
+  const planItems = useMemo<TimelineItem[]>(() => {
+    const slots = ((planQ.data?.plan as { slots?: PlanSlot[] } | undefined)?.slots ?? []).filter(
+      (s) => s.kind === "task" || s.kind === "skill"
+    );
+    const open = new Map((openTasksQ.data ?? []).map((t) => [t.id, t]));
+    return slots.map((s) => ({
+      key: `plan_${s.refId}`,
+      kind: s.kind === "task" ? ("task" as const) : ("skill" as const),
+      title: s.title,
+      emoji: s.emoji,
+      startMin: s.startMin,
+      endMin: s.endMin,
+      fixed: true,
+      required: false,
+      task: s.kind === "task" ? open.get(s.refId.split("#")[0]) : undefined,
+    }));
+  }, [planQ.data, openTasksQ.data]);
+
+  const allItems = useMemo(
+    () => [...items, ...planItems].sort((x, y) => daySortKey(x.startMin) - daySortKey(y.startMin)),
+    [items, planItems]
+  );
 
   const [quietOpen, setQuietOpen] = useState(false);
   const [ceremonyOpen, setCeremonyOpen] = useState(false);
@@ -222,14 +263,20 @@ export function Today() {
 
       {/* Timeline */}
       <div className="space-y-2">
-        {items.map((item) => {
-          const done = !!log[item.key];
+        {allItems.map((item) => {
+          const done =
+            item.kind === "task"
+              ? openTasksQ.isSuccess && !item.task
+              : item.kind === "skill"
+                ? !!log["skill_block"]
+                : !!log[item.key];
           const activeNow =
             item.fixed &&
             item.endMin !== undefined &&
             nowMin >= item.startMin &&
             nowMin < item.endMin;
-          const bonus = !item.required && item.kind !== "rest";
+          const bonus =
+            !item.required && item.kind !== "rest" && item.kind !== "task" && item.kind !== "skill";
           return (
             <div
               key={item.key}
@@ -278,6 +325,22 @@ export function Today() {
                   <span className="text-xl">😴</span>
                 ) : done ? (
                   <span className="text-xl">✅</span>
+                ) : item.kind === "task" ? (
+                  <button
+                    disabled={!session || completeTask.isPending || !item.task}
+                    onClick={() => item.task && completeTask.mutate(item.task)}
+                    className="rounded-full bg-amber-400 px-3 py-1.5 text-xs font-black text-sky-950 transition enabled:hover:bg-amber-300 disabled:opacity-30"
+                  >
+                    Done ✓
+                  </button>
+                ) : item.kind === "skill" ? (
+                  <button
+                    disabled={!session || checkAnchor.isPending}
+                    onClick={() => checkAnchor.mutate({ def: SKILL_BLOCK_DEF })}
+                    className="rounded-full bg-amber-400 px-3 py-1.5 text-xs font-black text-sky-950 transition enabled:hover:bg-amber-300 disabled:opacity-30"
+                  >
+                    +15 XP
+                  </button>
                 ) : item.anchor?.kind === "quiet" ? (
                   <button
                     disabled={!session}

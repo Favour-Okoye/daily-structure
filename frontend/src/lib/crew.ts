@@ -78,10 +78,19 @@ export interface CharState {
   recruitedOn: string | null;
   /** Bond earned outside the log (puzzle sessions etc. in later phases). */
   bondBonus: number;
+  /** History before this day is ignored by the bond formula (reunion fresh start). */
+  bondSince: string | null;
   level: number;
   gone: boolean;
   goneSince: string | null;
   prevBond: number;
+}
+
+export interface ComebackQuest {
+  charId: CharId;
+  startedOn: string;
+  daysDone: number; // 0..3
+  lastDayDone: string | null;
 }
 
 export interface CrewState {
@@ -89,6 +98,10 @@ export interface CrewState {
   startedOn: string;
   spentXp: number;
   characters: Record<CharId, CharState>;
+  comeback: ComebackQuest | null;
+  comebackDone: boolean;
+  pendingRecruit: CharId | null;
+  pendingReunion: CharId | null;
   log: { day: string; text: string }[];
 }
 
@@ -98,6 +111,7 @@ function defaultChar(id: CharId, startedOn: string): CharState {
     recruited: starter,
     recruitedOn: starter ? startedOn : null,
     bondBonus: 0,
+    bondSince: null,
     level: 1,
     gone: false,
     goneSince: null,
@@ -118,6 +132,7 @@ export function normalizeCrew(raw: unknown, today: string): CrewState {
       recruited: c.recruited ?? base.recruited,
       recruitedOn: c.recruitedOn ?? base.recruitedOn,
       bondBonus: c.bondBonus ?? 0,
+      bondSince: c.bondSince ?? null,
       level: c.level ?? 1,
       gone: c.gone ?? false,
       goneSince: c.goneSince ?? null,
@@ -129,6 +144,10 @@ export function normalizeCrew(raw: unknown, today: string): CrewState {
     startedOn,
     spentXp: r.spentXp ?? 0,
     characters: chars,
+    comeback: r.comeback ?? null,
+    comebackDone: r.comebackDone ?? false,
+    pendingRecruit: r.pendingRecruit ?? null,
+    pendingReunion: r.pendingReunion ?? null,
     log: (r.log ?? []).slice(0, 60),
   };
 }
@@ -179,7 +198,7 @@ export function expectedAreas(day: string, season: Season): Set<AreaId> {
   return out;
 }
 
-interface AreaDay {
+export interface AreaDay {
   done: Set<AreaId>;
   excused: Set<AreaId>;
 }
@@ -286,18 +305,19 @@ export function bondOf(
 ): number {
   const area = CHAR_AREA[char];
   if (!area) return clampBond(state.characters[char].bondBonus);
+  const from = state.characters[char].bondSince ?? state.startedOn;
   let bond = 0;
   // completions: count per day, capped
   const perDay = new Map<string, number>();
   for (const row of rows) {
-    if (row.status !== "done") continue;
+    if (row.status !== "done" || row.day < from) continue;
     const areas = areasOfSlug(row.anchor_slug);
     const relevant = area === "overall" ? areas.length > 0 : areas.includes(area);
     if (relevant) perDay.set(row.day, (perDay.get(row.day) ?? 0) + 1);
   }
   for (const count of perDay.values()) bond += Math.min(6, count * 2);
   // neglect: expected days (excluding today) with nothing done
-  let cursor = state.startedOn;
+  let cursor = from;
   while (cursor < today) {
     const expected =
       area === "overall" ? expectedAreas(cursor, season).size > 0 : expectedAreas(cursor, season).has(area);
@@ -342,7 +362,54 @@ export const MOOD_LINES: Record<CharId, Partial<Record<Mood, string>>> = {
     worried: "You're sailing blind — approve the plan at night!",
     sad: "A navigator nobody listens to…",
   },
-  usopp: {}, sanji: {}, chopper: {}, robin: {}, naruto: {}, sasuke: {}, sakura: {}, kakashi: {}, hinata: {},
+  usopp: {
+    happy: "Behold! The great Usopp's apprentice learns a new skill daily!",
+    neutral: "A story needs new chapters. Learn something!",
+    worried: "Even I can't invent stories about skills you didn't practice…",
+    sad: "My tales are running dry…",
+  },
+  sanji: {
+    happy: "The future is well provisioned. Magnifique.",
+    neutral: "The pantry's fine, but keep stocking it.",
+    worried: "An empty application pipeline is an empty pantry.",
+    sad: "How can I cook for a future no one is preparing?",
+  },
+  chopper: {
+    happy: "Your quiet times are the best medicine! (I'm not pleased, you jerk~)",
+    neutral: "Doctor's note: a little more stillness, please.",
+    worried: "Your mind needs its rest, I'm serious!",
+    sad: "Patient refuses treatment…",
+  },
+  robin: {
+    happy: "Fufufu. A well-read captain of her own life.",
+    neutral: "The books are patient. But not forever.",
+    worried: "Knowledge left unopened is knowledge lost.",
+    sad: "A library with no reader…",
+  },
+  naruto: {
+    happy: "The streak is real — believe it!",
+    neutral: "Keep it going, dattebayo!",
+    worried: "The streak is wobbling — one push, come on!",
+    sad: "It broke… so we build it again. That's the ninja way.",
+  },
+  sasuke: {
+    neutral: "…I walked out once too. Coming back is the harder path.",
+  },
+  sakura: {
+    happy: "Weekly goals met — shannaro!",
+    neutral: "Pick goals you'll actually fight for.",
+    worried: "The week is slipping past its promises.",
+    sad: "Promises to yourself count double when broken.",
+  },
+  kakashi: {
+    neutral: "Those who abandon their routines are worse than scum. …No pressure.",
+  },
+  hinata: {
+    happy: "Your walk with God is steady… I'm glad.",
+    neutral: "A quiet prayer still counts.",
+    worried: "The prayers are getting quieter…",
+    sad: "Even now… He waits for you.",
+  },
 };
 
 export const MOOD_EMOJI: Record<Mood, string> = {
@@ -353,3 +420,153 @@ export const MOOD_EMOJI: Record<Mood, string> = {
   packing: "🎒",
   gone: "💨",
 };
+
+/* ------------------------------------------------------------------ */
+/* Walkouts (Phase 4)                                                  */
+/* ------------------------------------------------------------------ */
+
+export const WALKOUT_PACKING = 4; // consecutive neglected days → packing banner
+export const WALKOUT_GONE = 5; // one more → they leave (village comfort adds +1 later)
+
+/** Consecutive expected, non-excused days ending yesterday with NOTHING done. */
+export function neglectRunOf(
+  area: AreaId,
+  today: string,
+  startedOn: string,
+  season: Season,
+  areaDays: Map<string, AreaDay>
+): number {
+  let run = 0;
+  let cursor = shiftDay(today, -1);
+  for (let i = 0; i < 30; i++) {
+    if (cursor < startedOn) break;
+    const expected =
+      area === "overall" ? expectedAreas(cursor, season).size > 0 : expectedAreas(cursor, season).has(area);
+    const excused = areaDays.get(cursor)?.excused.has(area) ?? false;
+    if (expected && !excused) {
+      const entry = areaDays.get(cursor);
+      const done =
+        area === "overall" ? (entry?.done.size ?? 0) > 0 : (entry?.done.has(area) ?? false);
+      if (done) break;
+      run++;
+    }
+    cursor = shiftDay(cursor, -1);
+  }
+  return run;
+}
+
+/** The most recent day BEFORE today on which `area` was expected. */
+export function prevExpectedDay(
+  area: AreaId,
+  today: string,
+  startedOn: string,
+  season: Season
+): string | null {
+  let cursor = shiftDay(today, -1);
+  for (let i = 0; i < 14; i++) {
+    if (cursor < startedOn) return null;
+    const expected =
+      area === "overall" ? expectedAreas(cursor, season).size > 0 : expectedAreas(cursor, season).has(area);
+    if (expected) return cursor;
+    cursor = shiftDay(cursor, -1);
+  }
+  return null;
+}
+
+/* ------------------------------------------------------------------ */
+/* Comeback quest                                                      */
+/* ------------------------------------------------------------------ */
+
+export const QUEST_STEPS = [
+  { title: "Show up", detail: "Do at least one thing in their area today." },
+  { title: "Prove it", detail: "Complete their area's full expectations today." },
+  { title: "The apology", detail: "Full expectations again — and write a short recommitment." },
+];
+
+/** All required anchor slugs for `day` that feed `area`. */
+export function requiredSlugsOfArea(day: string, season: Season, area: AreaId): string[] {
+  return anchorsForDay(day, season)
+    .filter((a) => a.required && (area === "overall" || areasOfSlug(a.slug).includes(area)))
+    .map((a) => a.slug);
+}
+
+export function questRequirementMet(
+  step: number,
+  area: AreaId,
+  day: string,
+  season: Season,
+  doneSlugs: Set<string>
+): boolean {
+  if (step === 1) {
+    if (area === "overall") return doneSlugs.size > 0;
+    for (const s of doneSlugs) if (areasOfSlug(s).includes(area)) return true;
+    return false;
+  }
+  const need = requiredSlugsOfArea(day, season, area);
+  if (need.length === 0) {
+    // rest day / no expectations: showing up with one item still counts
+    return questRequirementMet(1, area, day, season, doneSlugs);
+  }
+  return need.every((s) => doneSlugs.has(s));
+}
+
+/* ------------------------------------------------------------------ */
+/* Recruits                                                            */
+/* ------------------------------------------------------------------ */
+
+export interface RecruitStats {
+  streak: number;
+  skillBlocks: number;
+  faithCount: number;
+  churchCount: number;
+  quietCount: number;
+  jobPrepCount: number;
+  mindCount: number;
+  totalXp: number;
+  settledGoalWeeks: number;
+  comebackDone: boolean;
+}
+
+export interface RecruitDef {
+  id: CharId;
+  hint: string;
+  check: (s: RecruitStats) => boolean;
+}
+
+export const RECRUITS: RecruitDef[] = [
+  { id: "usopp", hint: "3-day streak + 1 skill block", check: (s) => s.streak >= 3 && s.skillBlocks >= 1 },
+  { id: "hinata", hint: "10 faith completions + 2 church events", check: (s) => s.faithCount >= 10 && s.churchCount >= 2 },
+  { id: "chopper", hint: "7-day streak + 5 quiet times", check: (s) => s.streak >= 7 && s.quietCount >= 5 },
+  { id: "sanji", hint: "5 job-prep completions", check: (s) => s.jobPrepCount >= 5 },
+  { id: "robin", hint: "1,500 XP + 10 mind completions", check: (s) => s.totalXp >= 1500 && s.mindCount >= 10 },
+  { id: "naruto", hint: "14-day streak", check: (s) => s.streak >= 14 },
+  { id: "sakura", hint: "2 weeks with a weekly goal met", check: (s) => s.settledGoalWeeks >= 2 },
+  { id: "kakashi", hint: "5,000 lifetime XP", check: (s) => s.totalXp >= 5000 },
+  { id: "sasuke", hint: "win someone back (or a 45-day streak)", check: (s) => s.comebackDone || s.streak >= 45 },
+];
+
+/* ------------------------------------------------------------------ */
+/* Level forms                                                         */
+/* ------------------------------------------------------------------ */
+
+export const LEVEL_COST = [0, 0, 400, 1200, 2800]; // index = target level
+export const LEVEL_BOND_GATE = [0, 0, 25, 50, 75];
+
+export const FORM_NAMES: Record<CharId, string[]> = {
+  luffy: ["Straw Hat", "Gear 2", "Gear 3", "Gear 4"],
+  zoro: ["Roronoa", "Two Swords", "Santoryu"],
+  nami: ["Navigator", "Clima-Tact", "Weather Witch"],
+  usopp: ["Sniper", "Kabuto", "God Usopp"],
+  sanji: ["Cook", "Diable Jambe", "Stealth Black"],
+  chopper: ["Doctor", "Heavy Point", "Monster Point"],
+  robin: ["Scholar", "Mil Fleur", "Demonio"],
+  naruto: ["Genin", "Sage Mode", "Kurama Mode", "Baryon Mode"],
+  sasuke: ["Shinobi", "Sharingan", "Rinnegan"],
+  sakura: ["Kunoichi", "Byakugō Seal", "Blossom"],
+  kakashi: ["Jonin", "Raikiri", "Hokage"],
+  hinata: ["Hyuga", "Byakugan", "Twin Lions"],
+};
+
+export function maxLevel(id: CharId): number {
+  return FORM_NAMES[id].length;
+}

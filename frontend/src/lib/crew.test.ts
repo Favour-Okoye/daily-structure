@@ -3,8 +3,11 @@ import {
   areaMood,
   bondOf,
   buildAreaDays,
+  neglectRunOf,
   normalizeCrew,
+  questRequirementMet,
   STARTING_CREW,
+  WALKOUT_GONE,
   type LogRow,
 } from "./crew";
 
@@ -61,6 +64,43 @@ describe("areaMood — Zoro (body/exercise)", () => {
   it("brand-new sailors start happy (honeymoon)", () => {
     const ad = buildAreaDays();
     expect(areaMood("body", "2026-08-18", "2026-08-17", SEASON, ad)).toBe("happy");
+  });
+});
+
+describe("neglectRunOf — the walkout clock", () => {
+  it("5 neglected weekdays trip the walkout threshold", () => {
+    // started Mon 17, nothing ever done, checked Sat 22 → Fri,Thu,Wed,Tue,Mon = 5
+    const run = neglectRunOf("body", "2026-08-22", "2026-08-17", SEASON, buildAreaDays());
+    expect(run).toBe(5);
+    expect(run >= WALKOUT_GONE).toBe(true);
+  });
+  it("a trained day breaks the run", () => {
+    const ad = buildAreaDays(rows(["2026-08-19", "exercise"]));
+    expect(neglectRunOf("body", "2026-08-22", "2026-08-17", SEASON, ad)).toBe(2);
+  });
+  it("Sunday never extends the run", () => {
+    // started Thu 20, nothing done, checked Tue 25 → Mon 24, Sat 22, Fri 21, Thu 20 (Sun 23 skipped) = 4
+    expect(neglectRunOf("body", "2026-08-25", "2026-08-20", SEASON, buildAreaDays())).toBe(4);
+  });
+});
+
+describe("questRequirementMet — comeback steps", () => {
+  it("step 1: one item in their area", () => {
+    expect(questRequirementMet(1, "body", "2026-08-21", SEASON, new Set())).toBe(false);
+    expect(questRequirementMet(1, "body", "2026-08-21", SEASON, new Set(["exercise"]))).toBe(true);
+  });
+  it("step 2: the area's full expectations", () => {
+    expect(questRequirementMet(2, "body", "2026-08-21", SEASON, new Set(["exercise"]))).toBe(true);
+    expect(questRequirementMet(2, "faith", "2026-08-21", SEASON, new Set(["devotional"]))).toBe(false);
+    expect(
+      questRequirementMet(
+        2,
+        "faith",
+        "2026-08-21",
+        SEASON,
+        new Set(["devotional", "noon_prayer", "bible", "family_prayers", "confession"])
+      )
+    ).toBe(true);
   });
 });
 

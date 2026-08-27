@@ -261,6 +261,31 @@ export function Today() {
         </div>
       )}
 
+      {aboard.some((m) => m.mood === "packing") && (
+        <Link
+          to="/crew"
+          className="soft-pulse block rounded-3xl bg-rose-50 p-4 shadow-sm ring-2 ring-rose-300"
+        >
+          <p className="text-sm font-black text-rose-700">
+            🎒{" "}
+            {aboard
+              .filter((m) => m.mood === "packing")
+              .map((m) => m.name)
+              .join(" and ")}{" "}
+            is packing their bags — one real day in their area and they'll stay. Today.
+          </p>
+        </Link>
+      )}
+
+      {aboard.some((m) => m.gone) && (
+        <Link to="/crew" className="block rounded-3xl bg-stone-100 p-4 shadow-sm ring-1 ring-stone-300">
+          <p className="text-sm font-black text-stone-600">
+            💨 {aboard.filter((m) => m.gone).map((m) => m.name).join(", ")} left the crew. Go after
+            them →
+          </p>
+        </Link>
+      )}
+
       {/* Timeline */}
       <div className="space-y-2">
         {allItems.map((item) => {

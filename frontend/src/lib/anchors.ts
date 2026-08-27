@@ -101,7 +101,7 @@ export const ANCHORS: AnchorDef[] = [
     suggestMin: 21 * 60 + 15,
     minutes: 45,
     requiredOn: notSunday,
-    hint: "Auto-detect arrives in a later phase — until then, check it honestly.",
+    hint: "Robin auto-detects your videos — watch them and this ticks itself.",
   },
   {
     slug: "quiet_time",

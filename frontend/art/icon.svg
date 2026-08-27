@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <!-- Straw hat on the ocean — original hand-drawn art. -->
+  <rect width="512" height="512" rx="118" fill="#0c4a6e"/>
+  <!-- sun glow -->
+  <circle cx="256" cy="240" r="170" fill="#fde68a" opacity="0.14"/>
+  <!-- waves -->
+  <path d="M0 400 q42 -20 84 0 t84 0 84 0 84 0 84 0 92 0 v112 h-512 z" fill="#075985"/>
+  <path d="M0 428 q42 -16 84 0 t84 0 84 0 84 0 84 0 92 0 v84 h-512 z" fill="#0369a1" opacity="0.8"/>
+  <!-- straw hat -->
+  <g transform="translate(0,-14)">
+    <!-- brim -->
+    <ellipse cx="256" cy="300" rx="188" ry="52" fill="#fbbf24" stroke="#92400e" stroke-width="12"/>
+    <!-- dome -->
+    <path d="M126 296 a130 132 0 0 1 260 0 l0 6 a130 40 0 0 1 -260 0 z" fill="#fcd34d" stroke="#92400e" stroke-width="12"/>
+    <!-- red band -->
+    <path d="M126 268 a130 34 0 0 0 260 0 l0 34 a130 34 0 0 1 -260 0 z" fill="#dc2626"/>
+    <!-- weave hints -->
+    <path d="M170 216 a118 118 0 0 1 172 0" fill="none" stroke="#f59e0b" stroke-width="7" stroke-linecap="round" opacity="0.7"/>
+    <path d="M152 246 a132 132 0 0 1 208 0" fill="none" stroke="#f59e0b" stroke-width="7" stroke-linecap="round" opacity="0.55"/>
+  </g>
+  <!-- tiny anchor charm -->
+  <g transform="translate(256,436)" stroke="#fde68a" stroke-width="10" stroke-linecap="round" fill="none">
+    <line x1="0" y1="-26" x2="0" y2="18"/>
+    <circle cx="0" cy="-34" r="9"/>
+    <path d="M-22 4 a22 22 0 0 0 44 0"/>
+    <line x1="-14" y1="-12" x2="14" y2="-12"/>
+  </g>
+</svg>

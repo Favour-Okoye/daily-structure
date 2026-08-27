@@ -5,10 +5,14 @@ import {
   useBuyLevel,
   useCompleteQuestDay,
   useCrew,
+  usePuzzleSession,
   useStartComeback,
+  useTickets,
   useVillage,
   type CrewMember,
 } from "../lib/crewQueries";
+import { PuzzleGame } from "../components/PuzzleGame";
+import type { CharId } from "../lib/crew";
 import {
   CHAR_META,
   COMFY_FURNITURE,
@@ -33,9 +37,13 @@ export function Crew() {
   const completeQuestDay = useCompleteQuestDay();
   const buyLevel = useBuyLevel();
   const village = useVillage();
+  const tickets = useTickets();
+  const puzzle = usePuzzleSession();
   const [note, setNote] = useState("");
   const [flash, setFlash] = useState<string | null>(null);
   const [placing, setPlacing] = useState<string | null>(null);
+  const [picking, setPicking] = useState(false);
+  const [playing, setPlaying] = useState<CharId | null>(null);
 
   const say = (message: string) => {
     setFlash(message);
@@ -204,6 +212,54 @@ export function Crew() {
         ))}
       </div>
 
+      {/* Playtime */}
+      <div className="rounded-3xl bg-white p-4 shadow-sm ring-1 ring-sky-100">
+        <div className="flex items-center justify-between">
+          <h2 className="text-sm font-black text-sky-900">🎟️ Playtime</h2>
+          <span className="rounded-full bg-amber-100 px-2.5 py-0.5 text-xs font-black text-amber-700">
+            {tickets.available} ticket{tickets.available !== 1 ? "s" : ""}
+          </span>
+        </div>
+        <p className="mt-1 text-[11px] font-semibold text-stone-400">
+          Earn tickets by finishing tasks on time (max 2/day) and perfect days. A game of blocks
+          with a crewmate pays bond and furniture — never XP.
+        </p>
+        {picking ? (
+          <div className="mt-2">
+            <p className="text-[10px] font-black text-stone-400">WHO'S PLAYING WITH YOU?</p>
+            <div className="mt-1 flex flex-wrap gap-2">
+              {aboard
+                .filter((m) => !m.gone)
+                .map((m) => (
+                  <button
+                    key={m.id}
+                    onClick={() => {
+                      if (puzzle.start()) {
+                        setPlaying(m.id);
+                        setPicking(false);
+                      }
+                    }}
+                    className="rounded-full bg-stone-50 px-3 py-1.5 text-xs font-black text-stone-600 hover:bg-amber-100"
+                  >
+                    {m.name}
+                  </button>
+                ))}
+              <button onClick={() => setPicking(false)} className="text-xs font-bold text-stone-300">
+                cancel
+              </button>
+            </div>
+          </div>
+        ) : (
+          <button
+            disabled={tickets.available < 1}
+            onClick={() => setPicking(true)}
+            className="mt-2 w-full rounded-full bg-sky-900 py-2.5 text-sm font-black text-white transition enabled:hover:bg-sky-800 disabled:opacity-40"
+          >
+            {tickets.available < 1 ? "No tickets — earn one out there ⚓" : "Play a round (1 🎟️)"}
+          </button>
+        )}
+      </div>
+
       {/* The village */}
       <div className="rounded-3xl bg-white p-4 shadow-sm ring-1 ring-sky-100">
         <h2 className="text-sm font-black text-sky-900">🏘️ The village</h2>
@@ -340,6 +396,14 @@ export function Crew() {
           ))}
         </div>
       </div>
+
+      {playing && (
+        <PuzzleGame
+          companion={playing}
+          onFinish={(score) => puzzle.finish(playing, score)}
+          onQuit={() => setPlaying(null)}
+        />
+      )}
 
       {/* Voyage log */}
       {state.log.length > 0 && (

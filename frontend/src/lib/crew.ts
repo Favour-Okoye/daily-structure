@@ -112,6 +112,8 @@ export interface CrewState {
   village: Record<CharId, HomeState>;
   /** Furniture owned but not yet placed (shop buys + puzzle drops). */
   furnitureInv: string[];
+  /** Play tickets spent (earned side is derived from the XP ledger). */
+  ticketsSpent: number;
   /** Today's character request, if one came. */
   request: CharRequest | null;
   log: { day: string; text: string }[];
@@ -192,10 +194,24 @@ export function normalizeCrew(raw: unknown, today: string): CrewState {
       return v;
     })(),
     furnitureInv: r.furnitureInv ?? [],
+    ticketsSpent: r.ticketsSpent ?? 0,
     request: r.request ?? null,
     log: (r.log ?? []).slice(0, 60),
   };
 }
+
+/* ------------------------------------------------------------------ */
+/* Playtime (Phase 7)                                                  */
+/* ------------------------------------------------------------------ */
+
+export const TICKET_STASH_CAP = 5;
+export const TICKETS_PER_DAY_FROM_TASKS = 2;
+
+/** Prize pools — puzzle sessions pay furniture and bond, NEVER XP. */
+export const DROP_COMMON = ["goldfish", "shell", "vase"];
+export const DROP_RARE = ["telescope", "trophy", "chest"];
+export const PUZZLE_COMMON_SCORE = 300;
+export const PUZZLE_RARE_SCORE = 1200;
 
 /* ------------------------------------------------------------------ */
 /* Grace tokens                                                        */
@@ -711,6 +727,8 @@ export const FURNITURE: FurnitureDef[] = [
   { id: "maptable", title: "Chart table", emoji: "🧭", cost: 120 },
   // puzzle-drop only:
   { id: "goldfish", title: "Goldfish bowl", emoji: "🐠", cost: 0 },
+  { id: "shell", title: "Sea shell", emoji: "🐚", cost: 0 },
+  { id: "vase", title: "Flower vase", emoji: "🌼", cost: 0 },
   { id: "telescope", title: "Brass telescope", emoji: "🔭", cost: 0, rare: true },
   { id: "trophy", title: "Golden trophy", emoji: "🏆", cost: 0, rare: true },
   { id: "chest", title: "Treasure chest", emoji: "🧰", cost: 0, rare: true },

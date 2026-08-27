@@ -625,6 +625,97 @@ export function useClaimRequest() {
   };
 }
 
+/* ------------------------------------------------------------------ */
+/* Playtime: tickets from real life, prizes for the homes              */
+/* ------------------------------------------------------------------ */
+
+import {
+  DROP_COMMON,
+  DROP_RARE,
+  PUZZLE_COMMON_SCORE,
+  PUZZLE_RARE_SCORE,
+  TICKET_STASH_CAP,
+  TICKETS_PER_DAY_FROM_TASKS,
+} from "./crew";
+
+/** Tickets earned, derived from the ledger: on-time tasks (cap 2/day) + perfect days. */
+export function useTickets() {
+  const { session } = useAuth();
+  const { data } = useCrewState();
+  const earnedQ = useQuery({
+    queryKey: ["ds_tickets_earned", session?.user.id],
+    enabled: !!supabase && !!session,
+    staleTime: 60_000,
+    queryFn: async (): Promise<number> => {
+      const { data: rows, error } = await supabase!
+        .from("ds_xp_events")
+        .select("action, happened_on")
+        .in("action", ["task_on_time", "day_complete"]);
+      if (error) throw error;
+      const onTimeByDay = new Map<string, number>();
+      let earned = 0;
+      for (const r of (rows ?? []) as { action: string; happened_on: string }[]) {
+        if (r.action === "day_complete") earned += 1;
+        else {
+          const n = onTimeByDay.get(r.happened_on) ?? 0;
+          if (n < TICKETS_PER_DAY_FROM_TASKS) {
+            onTimeByDay.set(r.happened_on, n + 1);
+            earned += 1;
+          }
+        }
+      }
+      return earned;
+    },
+  });
+  const spent = data?.state?.ticketsSpent ?? 0;
+  return {
+    loading: earnedQ.isLoading,
+    available: Math.max(0, Math.min(TICKET_STASH_CAP, (earnedQ.data ?? 0) - spent)),
+  };
+}
+
+/** Spend one ticket to start a session; reward bond + furniture at the end.
+ *  The puzzle NEVER pays XP — real life is the only XP source. */
+export function usePuzzleSession() {
+  const { data } = useCrewState();
+  const save = useSaveCrew();
+  const today = appDay();
+
+  const start = (): boolean => {
+    const state = data?.state;
+    if (!state) return false;
+    save.mutate({ ...state, ticketsSpent: state.ticketsSpent + 1 });
+    return true;
+  };
+
+  const finish = (companion: CharId, score: number): { dropId: string | null } => {
+    const state = data?.state;
+    if (!state) return { dropId: null };
+    const next: CrewState = JSON.parse(JSON.stringify(state)) as CrewState;
+    next.characters[companion].bondBonus += 3;
+    let dropId: string | null = null;
+    if (score >= PUZZLE_RARE_SCORE) {
+      dropId = DROP_RARE[Math.floor(Math.random() * DROP_RARE.length)];
+    } else if (score >= PUZZLE_COMMON_SCORE) {
+      dropId = DROP_COMMON[Math.floor(Math.random() * DROP_COMMON.length)];
+    }
+    if (dropId) next.furnitureInv.push(dropId);
+    next.log = [
+      {
+        day: today,
+        text: `Played blocks with ${CHAR_META[companion].name} — ${score} points${
+          dropId ? ` and won ${furnitureById(dropId)?.emoji} ${furnitureById(dropId)?.title}!` : "."
+        } +3 bond`,
+      },
+      ...next.log,
+    ].slice(0, 60);
+    save.mutate(next);
+    return { dropId };
+  };
+
+  return { start, finish };
+}
+
 /** Nightly ceremony: store tomorrow's approved plan. */
 export function useApprovePlan() {
   const { session } = useAuth();

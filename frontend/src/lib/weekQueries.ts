@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "./supabase";
 import { useAuth } from "./auth";
-import { appDay, isoWeekKey, mondayOf, shiftDay } from "./day";
+import { appDay, isoWeekKey, mondayOf, shiftDay, weekdayOf } from "./day";
 import { awardCustom, DS_XP } from "./xp";
 import { GOALS_DECK, type CrewState } from "./crew";
 import { useCrewState, useSaveCrew } from "./crewQueries";
@@ -95,7 +95,10 @@ export function useSetWeeklyPicks() {
   return (picks: string[]) => {
     const state = data?.state;
     if (!state || picks.length !== 2) return;
-    const weekKey = isoWeekKey(appDay());
+    // Sunday is the voyage-log ritual: promises made on Sunday are for the
+    // week that STARTS tomorrow, never the one dying at midnight.
+    const today = appDay();
+    const weekKey = weekdayOf(today) === 0 ? isoWeekKey(shiftDay(today, 1)) : isoWeekKey(today);
     const titles = picks
       .map((p) => GOALS_DECK.find((g) => g.id === p)?.title ?? p)
       .join(" · ");

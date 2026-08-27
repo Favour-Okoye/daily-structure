@@ -25,8 +25,10 @@ export function Week() {
 
   const weekly = state?.weekly ?? null;
   const isCurrentWeek = weekly?.weekKey === thisWeekKey;
+  const isFutureWeek = !!weekly && weekly.weekKey > thisWeekKey;
   const needsSettle = !!weekly && !weekly.settled && weekly.weekKey < thisWeekKey;
   const settleWeekQ = useWeekData(needsSettle ? mondayOfWeekKey(weekly!.weekKey) : thisMonday);
+  const lateInWeek = [4, 5, 6].includes(new Date(`${today}T12:00:00Z`).getUTCDay());
 
   if (!session) {
     return (
@@ -150,10 +152,32 @@ export function Week() {
             Settled next week — 40 XP each. Sakura is watching.
           </p>
         </div>
+      ) : isFutureWeek ? (
+        <div className="rounded-3xl bg-white p-4 shadow-sm ring-1 ring-sky-100">
+          <h2 className="text-sm font-black text-sky-900">🎯 Promises for the coming week</h2>
+          <div className="mt-2 space-y-1.5">
+            {weekly!.picks.map((p) => {
+              const g = GOALS_DECK.find((x) => x.id === p);
+              return (
+                <div key={p} className="flex items-center gap-2 rounded-2xl bg-stone-50 px-3 py-2">
+                  <span>{g?.emoji}</span>
+                  <span className="flex-1 text-xs font-bold text-stone-700">{g?.title}</span>
+                  <span className="text-[10px] font-black text-sky-500">SETS SAIL MONDAY</span>
+                </div>
+              );
+            })}
+          </div>
+        </div>
       ) : (
         !needsSettle && (
           <div className="rounded-3xl bg-white p-4 shadow-sm ring-1 ring-sky-100">
             <h2 className="text-sm font-black text-sky-900">🎯 Pick 2 promises for this week</h2>
+            {lateInWeek && (
+              <p className="mt-1 text-[11px] font-bold text-amber-700">
+                The week's almost over — it's completely fine to wait and promise fresh on Sunday
+                evening instead. Promises should be winnable.
+              </p>
+            )}
             <div className="mt-2 grid grid-cols-1 gap-1.5 sm:grid-cols-2">
               {GOALS_DECK.map((g) => (
                 <button

@@ -8,6 +8,8 @@ import {
   useSetSeason,
   useSettings,
 } from "../lib/queries";
+import { useCrewState } from "../lib/crewQueries";
+import { SKILL_DECK } from "../lib/crew";
 
 export function More() {
   const { session } = useAuth();
@@ -55,6 +57,8 @@ export function More() {
         </button>
       </div>
 
+      <SkillDeckCard />
+
       <SeasonToggle />
 
       <FridayToggle />
@@ -77,6 +81,40 @@ export function More() {
           Sign out (both apps)
         </button>
       )}
+    </div>
+  );
+}
+
+function SkillDeckCard() {
+  const { data } = useCrewState();
+  const pointer = (data?.state?.skillPointer ?? 0) % SKILL_DECK.length;
+  return (
+    <div className="rounded-3xl bg-white p-4 shadow-sm ring-1 ring-sky-100">
+      <h2 className="text-sm font-black text-sky-900">🎯 Your skill deck</h2>
+      <p className="mt-1 text-xs font-semibold text-stone-400">
+        On light days, the planner deals ONE card into your day as a 15-minute skill block.
+        Complete it (+15 XP) and the deck rotates. Usopp is recruited by these.
+      </p>
+      <div className="mt-2 space-y-1">
+        {SKILL_DECK.map((card, i) => (
+          <div
+            key={card.id}
+            className={`flex items-center gap-2 rounded-2xl px-3 py-1.5 text-xs font-bold ${
+              i === pointer
+                ? "bg-amber-50 text-amber-900 ring-1 ring-amber-300"
+                : "bg-stone-50 text-stone-500"
+            }`}
+          >
+            <span>{card.emoji}</span>
+            <span className="flex-1">{card.title}</span>
+            {i === pointer && (
+              <span className="rounded-full bg-amber-400 px-2 py-0.5 text-[9px] font-black text-sky-950">
+                UP NEXT
+              </span>
+            )}
+          </div>
+        ))}
+      </div>
     </div>
   );
 }

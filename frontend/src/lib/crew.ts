@@ -229,17 +229,20 @@ export interface SkillCard {
   emoji: string;
 }
 
+/** Personalized from Favour's 20-questions interview (2026-08-27):
+ *  chart-design joy, defend-without-AI September prep, storyteller-explainer
+ *  gifts, childhood reading love, and small tests of the YouTube dream. */
 export const SKILL_DECK: SkillCard[] = [
-  { id: "speak_aloud", title: "Record yourself talking 5 min about today's reading", emoji: "🎙️" },
-  { id: "sql_drill", title: "Solve 2 SQL practice exercises", emoji: "🗄️" },
-  { id: "ai_new", title: "Try one new AI thing you've never tried", emoji: "🤖" },
-  { id: "yt_study", title: "Watch one faceless YouTube channel — note WHY it works", emoji: "📹" },
-  { id: "sell_pitch", title: "Write a 5-line pitch selling anything to anyone", emoji: "🛍️" },
-  { id: "powerbi_drill", title: "Recreate one chart in Power BI or Excel", emoji: "📊" },
+  { id: "defend_sql", title: "Answer one SQL question out loud — no AI, no notes. Defend it.", emoji: "🛡️" },
+  { id: "chart_design", title: "Design one beautiful chart from any dataset (your favorite part!)", emoji: "📊" },
+  { id: "explain_chart", title: "Explain a chart out loud like you're clarifying it for a classmate", emoji: "🎙️" },
+  { id: "novel_joy", title: "Read one chapter of any novel — pure joy, like age 10", emoji: "📖" },
+  { id: "bible_recap", title: "Script a 3-min Bible story told like a manga recap", emoji: "✝️" },
+  { id: "yt_study", title: "Watch one faceless channel at 2x — note WHY it works", emoji: "📹" },
+  { id: "ai_new", title: "Try one new AI thing — then explain it without the AI", emoji: "🤖" },
+  { id: "defend_stats", title: "Explain one data concept (join, average vs median…) from memory", emoji: "🧠" },
+  { id: "organize_detail", title: "Plan any upcoming thing to the detail for 10 min — your gift", emoji: "🗂️" },
   { id: "sing_song", title: "Learn one new song verse by heart — and sing it", emoji: "🎵" },
-  { id: "yt_skill", title: "Watch one skill video (speaking, selling, data)", emoji: "🎬" },
-  { id: "dataviz_read", title: "Read one article on data storytelling", emoji: "📈" },
-  { id: "craft_try", title: "Spend 10 min on any craft or making something with your hands", emoji: "🧵" },
 ];
 
 /* ------------------------------------------------------------------ */

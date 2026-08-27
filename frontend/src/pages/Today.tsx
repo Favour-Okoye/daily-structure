@@ -16,6 +16,7 @@ import {
   useCheckAnchor,
   useCheckChurch,
   useMoneyTreeVideoCount,
+  useRainWatch,
   useSeason,
 } from "../lib/queries";
 import { useGrowth } from "../lib/stats";
@@ -219,6 +220,11 @@ export function Today() {
 
   const quietAnchor = items.find((i) => i.anchor?.kind === "quiet")?.anchor;
 
+  // Rain watch: she bikes to evening church — a wet forecast deserves an early heads-up.
+  const hasEveningChurch = churchForDay(day).some((e) => e.startMin >= 17 * 60);
+  const rainQ = useRainWatch(!!session && hasEveningChurch);
+  const rainProb = rainQ.data ?? null;
+
   if (!supabaseConfigured) {
     return (
       <div className="mx-auto max-w-sm rounded-3xl bg-white p-6 text-center shadow-md ring-1 ring-sky-100">
@@ -333,6 +339,15 @@ export function Today() {
             them →
           </p>
         </Link>
+      )}
+
+      {rainProb !== null && rainProb >= 50 && (
+        <div className="rounded-3xl bg-sky-50 p-4 shadow-sm ring-1 ring-sky-200">
+          <p className="text-sm font-black text-sky-800">
+            🌧️ {rainProb}% chance of rain around church time tonight. Bicycle call — decide early,
+            and if the sky wins, a grace token has your back. 🕊️
+          </p>
+        </div>
       )}
 
       {crewState?.request && crewState.request.day === day && (

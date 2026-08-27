@@ -233,10 +233,13 @@ export const SKILL_DECK: SkillCard[] = [
   { id: "speak_aloud", title: "Record yourself talking 5 min about today's reading", emoji: "🎙️" },
   { id: "sql_drill", title: "Solve 2 SQL practice exercises", emoji: "🗄️" },
   { id: "ai_new", title: "Try one new AI thing you've never tried", emoji: "🤖" },
+  { id: "yt_study", title: "Watch one faceless YouTube channel — note WHY it works", emoji: "📹" },
   { id: "sell_pitch", title: "Write a 5-line pitch selling anything to anyone", emoji: "🛍️" },
   { id: "powerbi_drill", title: "Recreate one chart in Power BI or Excel", emoji: "📊" },
+  { id: "sing_song", title: "Learn one new song verse by heart — and sing it", emoji: "🎵" },
   { id: "yt_skill", title: "Watch one skill video (speaking, selling, data)", emoji: "🎬" },
   { id: "dataviz_read", title: "Read one article on data storytelling", emoji: "📈" },
+  { id: "craft_try", title: "Spend 10 min on any craft or making something with your hands", emoji: "🧵" },
 ];
 
 /* ------------------------------------------------------------------ */

@@ -2,7 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "./supabase";
 import { useAuth } from "./auth";
 import { awardCustom } from "./xp";
-import { appDayWindowUtc } from "./day";
+import { appDay, appDayWindowUtc } from "./day";
 import type { AnchorDef, ChurchEvent } from "./anchors";
 
 /* ------------------------------------------------------------------ */
@@ -210,6 +210,34 @@ export function useSetSeason() {
       if (error) throw error;
     },
     onSuccess: () => void qc.invalidateQueries({ queryKey: ["ds_profile", session?.user.id] }),
+  });
+}
+
+/** Evening rain check (Open-Meteo, free, no key) — she bikes to church.
+ *  Max precipitation probability between 17:00 and 21:00 Brussels today. */
+export function useRainWatch(enabled: boolean) {
+  return useQuery({
+    queryKey: ["rain_watch", appDay()],
+    enabled,
+    staleTime: 30 * 60_000,
+    retry: 1,
+    queryFn: async (): Promise<number | null> => {
+      const res = await fetch(
+        "https://api.open-meteo.com/v1/forecast?latitude=50.85&longitude=4.35&hourly=precipitation_probability&forecast_days=1&timezone=Europe%2FBrussels"
+      );
+      if (!res.ok) return null;
+      const j = (await res.json()) as {
+        hourly?: { time?: string[]; precipitation_probability?: number[] };
+      };
+      const times = j.hourly?.time ?? [];
+      const probs = j.hourly?.precipitation_probability ?? [];
+      let max: number | null = null;
+      times.forEach((t, i) => {
+        const h = Number(t.slice(11, 13));
+        if (h >= 17 && h <= 21) max = Math.max(max ?? 0, probs[i] ?? 0);
+      });
+      return max;
+    },
   });
 }
 

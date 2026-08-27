@@ -16,6 +16,8 @@ import { useGrowth } from "../lib/stats";
 import { useAuth } from "../lib/auth";
 import { supabaseConfigured } from "../lib/supabase";
 import { QuietTimeGate, quietStartedAt } from "../components/QuietTimeGate";
+import { CeremonyGate } from "../components/CeremonyGate";
+import { useCrew } from "../lib/crewQueries";
 import { awardCustom, DS_XP } from "../lib/xp";
 
 const SEASON: Season = "gap"; // the season switch ships in a later phase
@@ -109,6 +111,8 @@ export function Today() {
   const growth = useGrowth();
 
   const [quietOpen, setQuietOpen] = useState(false);
+  const [ceremonyOpen, setCeremonyOpen] = useState(false);
+  const { aboard } = useCrew();
   useEffect(() => {
     // resume a quiet time that was running before a reload
     if (quietStartedAt() !== null) setQuietOpen(true);
@@ -178,6 +182,20 @@ export function Today() {
           </span>
         </div>
       </div>
+
+      {session && aboard.length > 0 && (
+        <Link
+          to="/crew"
+          className="flex items-center justify-center gap-3 rounded-3xl bg-white px-4 py-2.5 shadow-sm ring-1 ring-sky-100"
+        >
+          {aboard.map((m) => (
+            <span key={m.id} className="text-xs font-black text-stone-600">
+              {m.name} {m.moodEmoji}
+            </span>
+          ))}
+          <span className="text-[10px] font-black text-sky-600">→ crew</span>
+        </Link>
+      )}
 
       {!session && (
         <div className="rounded-3xl bg-white p-4 text-center shadow-sm ring-1 ring-sky-100">
@@ -268,6 +286,14 @@ export function Today() {
                   >
                     Begin 🌊
                   </button>
+                ) : item.anchor?.kind === "ceremony" ? (
+                  <button
+                    disabled={!session}
+                    onClick={() => setCeremonyOpen(true)}
+                    className="rounded-full bg-sky-900 px-3 py-1.5 text-xs font-black text-white transition enabled:hover:bg-sky-800 disabled:opacity-30"
+                  >
+                    Ceremony ✨
+                  </button>
                 ) : (
                   <button
                     disabled={!session || checkAnchor.isPending || checkChurch.isPending}
@@ -280,7 +306,7 @@ export function Today() {
                     }}
                     className="rounded-full bg-amber-400 px-3 py-1.5 text-xs font-black text-sky-950 transition enabled:hover:bg-amber-300 disabled:opacity-30"
                   >
-                    {item.anchor?.kind === "ceremony" ? "Seal ✨" : `+${item.xp} XP`}
+                    +{item.xp} XP
                   </button>
                 )}
               </div>
@@ -290,7 +316,7 @@ export function Today() {
       </div>
 
       <p className="pb-4 text-center text-xs font-bold text-stone-400">
-        👒 The crew boards in the next update. Luffy, Zoro and Nami are on their way.
+        ⚓ The crew never pays XP. Your real day pays the crew.
       </p>
 
       {quietOpen && quietAnchor && (
@@ -300,6 +326,19 @@ export function Today() {
             checkAnchor.mutate({ def: quietAnchor, meta: { quietSeconds: elapsedSeconds } });
           }}
           onCancel={() => setQuietOpen(false)}
+        />
+      )}
+
+      {ceremonyOpen && (
+        <CeremonyGate
+          requiredDone={doneRequired}
+          requiredTotal={required.length}
+          streak={growth.streak.current}
+          onSealed={() => {
+            const confession = items.find((i) => i.anchor?.kind === "ceremony")?.anchor;
+            if (confession) checkAnchor.mutate({ def: confession });
+          }}
+          onClose={() => setCeremonyOpen(false)}
         />
       )}
     </div>

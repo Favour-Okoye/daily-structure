@@ -5,7 +5,9 @@ import { AppShell } from "./components/AppShell";
 import { Today } from "./pages/Today";
 import { Login } from "./pages/Login";
 import { More } from "./pages/More";
-import { CrewSoon, TasksSoon, WeekSoon } from "./pages/ComingSoon";
+import { Crew } from "./pages/Crew";
+import { ChibiLab } from "./pages/ChibiLab";
+import { TasksSoon, WeekSoon } from "./pages/ComingSoon";
 
 const queryClient = new QueryClient();
 
@@ -17,11 +19,12 @@ export default function App() {
           <Routes>
             <Route element={<AppShell />}>
               <Route path="/" element={<Today />} />
-              <Route path="/crew" element={<CrewSoon />} />
+              <Route path="/crew" element={<Crew />} />
               <Route path="/tasks" element={<TasksSoon />} />
               <Route path="/week" element={<WeekSoon />} />
               <Route path="/more" element={<More />} />
               <Route path="/login" element={<Login />} />
+              <Route path="/chibi-lab" element={<ChibiLab />} />
               <Route path="*" element={<Navigate to="/" replace />} />
             </Route>
           </Routes>

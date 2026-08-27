@@ -22,8 +22,12 @@ import {
   questRequirementMet,
   RECRUITS,
   GRACE_PER_WEEK,
-  WALKOUT_GONE,
-  WALKOUT_PACKING,
+  HOUSE_COST,
+  THEME_COST,
+  HOME_SLOTS,
+  furnitureById,
+  requestForDay,
+  walkoutThresholds,
   areaMood,
   type CharId,
   type CrewState,
@@ -193,7 +197,7 @@ export function useCrew() {
         else if (area) {
           mood = areaMood(area, today, state.startedOn, SEASON, areaDays);
           const run = neglectRunOf(area, today, state.startedOn, SEASON, areaDays);
-          if (run >= WALKOUT_PACKING) mood = "packing";
+          if (run >= walkoutThresholds(state.village[id]).packing) mood = "packing";
           if (id === "nami" && overdue >= 1 && mood !== "packing") {
             mood = capMood(mood, overdue >= 3 ? "sad" : "worried");
           }
@@ -253,13 +257,13 @@ export function useCrew() {
       }
     }
 
-    // 2. Walkouts at rollover.
+    // 2. Walkouts at rollover (a comfy home buys one extra day).
     for (const id of ALL_CHARS) {
       const c = next.characters[id];
       const area = CHAR_AREA[id];
       if (!c.recruited || c.gone || !area) continue;
       const run = neglectRunOf(area, today, next.startedOn, SEASON, areaDays);
-      if (run >= WALKOUT_GONE) {
+      if (run >= walkoutThresholds(next.village[id]).gone) {
         const raw = bondOf(id, today, next, SEASON, areaDays, rows);
         c.gone = true;
         c.goneSince = today;
@@ -267,6 +271,13 @@ export function useCrew() {
         logIt(`${CHAR_META[id].name} walked out after ${run} neglected days. 💔`);
         changed = true;
       }
+    }
+
+    // 2b. Today's character request (deterministic; ~55% of days).
+    if (next.request?.day !== today) {
+      const recruitedIds = ALL_CHARS.filter((id) => next.characters[id].recruited && !next.characters[id].gone);
+      next.request = requestForDay(today, recruitedIds);
+      changed = true;
     }
 
     // 3. Recruits (one per pass, so each gets their moment).
@@ -487,6 +498,130 @@ export function useDismissScene() {
     if (!state) return;
     if (!state.pendingRecruit && !state.pendingReunion) return;
     save.mutate({ ...state, pendingRecruit: null, pendingReunion: null });
+  };
+}
+
+/* ------------------------------------------------------------------ */
+/* Village actions                                                     */
+/* ------------------------------------------------------------------ */
+
+async function awardRequest(state: CrewState, today: string): Promise<CrewState> {
+  const req = state.request!;
+  await awardCustom("char_request", "request", today, DS_XP.char_request);
+  const next: CrewState = JSON.parse(JSON.stringify(state)) as CrewState;
+  next.request = { ...req, done: true };
+  next.characters[req.charId].bondBonus += 2;
+  next.log = [
+    { day: today, text: `${CHAR_META[req.charId].name}'s request fulfilled. +2 bond 💛` },
+    ...next.log,
+  ].slice(0, 60);
+  return next;
+}
+
+export function useVillage() {
+  const { data } = useCrewState();
+  const save = useSaveCrew();
+  const { wallet } = useCrew();
+  const today = appDay();
+
+  const buildOrTheme = (charId: CharId): { ok: boolean; message: string } => {
+    const state = data?.state;
+    if (!state) return { ok: false, message: "Not loaded." };
+    const home = state.village[charId];
+    const cost = home.built ? THEME_COST : HOUSE_COST;
+    if (home.built && home.themed) return { ok: false, message: "Their home is complete." };
+    if (wallet < cost) return { ok: false, message: `Need ${cost} XP — you have ${wallet}.` };
+    const next: CrewState = JSON.parse(JSON.stringify(state)) as CrewState;
+    next.spentXp += cost;
+    const h = next.village[charId];
+    if (!h.built) h.built = true;
+    else h.themed = true;
+    next.log = [
+      {
+        day: today,
+        text: h.themed
+          ? `${CHAR_META[charId].name}'s home became their dream space! 🏡✨`
+          : `You built ${CHAR_META[charId].name} a home. 🏠`,
+      },
+      ...next.log,
+    ].slice(0, 60);
+    save.mutate(next);
+    return { ok: true, message: h.themed ? "Upgraded! They love it." : "Home built! Now furnish it." };
+  };
+
+  const buyFurniture = (itemId: string): { ok: boolean; message: string } => {
+    const state = data?.state;
+    const def = furnitureById(itemId);
+    if (!state || !def) return { ok: false, message: "Unknown item." };
+    if (def.cost <= 0) return { ok: false, message: "That one only comes from playtime prizes." };
+    if (wallet < def.cost) return { ok: false, message: `Need ${def.cost} XP — you have ${wallet}.` };
+    const next: CrewState = JSON.parse(JSON.stringify(state)) as CrewState;
+    next.spentXp += def.cost;
+    next.furnitureInv.push(itemId);
+    save.mutate(next);
+    return { ok: true, message: `${def.emoji} ${def.title} bought — place it in a home.` };
+  };
+
+  const placeFurniture = async (charId: CharId, itemId: string): Promise<{ ok: boolean; message: string }> => {
+    const state = data?.state;
+    if (!state) return { ok: false, message: "Not loaded." };
+    const home = state.village[charId];
+    if (!home.built) return { ok: false, message: "Build their home first." };
+    if (home.furniture.length >= HOME_SLOTS) return { ok: false, message: "Their home is full." };
+    const invIdx = state.furnitureInv.indexOf(itemId);
+    if (invIdx === -1) return { ok: false, message: "Not in your inventory." };
+    let next: CrewState = JSON.parse(JSON.stringify(state)) as CrewState;
+    next.furnitureInv.splice(invIdx, 1);
+    next.village[charId].furniture.push(itemId);
+    // Sakura-style "furnish" requests complete on placement.
+    if (next.request && !next.request.done && next.request.day === today && next.request.kind === "furnish") {
+      next = await awardRequest(next, today);
+    }
+    save.mutate(next);
+    return { ok: true, message: "Placed. The home feels warmer." };
+  };
+
+  const removeFurniture = (charId: CharId, slotIdx: number) => {
+    const state = data?.state;
+    if (!state) return;
+    const next: CrewState = JSON.parse(JSON.stringify(state)) as CrewState;
+    const [item] = next.village[charId].furniture.splice(slotIdx, 1);
+    if (item) next.furnitureInv.push(item);
+    save.mutate(next);
+  };
+
+  return { buildOrTheme, buyFurniture, placeFurniture, removeFurniture };
+}
+
+/** Claim today's character request once its condition is truly met. */
+export function useClaimRequest() {
+  const { data } = useCrewState();
+  const save = useSaveCrew();
+  const { session } = useAuth();
+  const qc = useQueryClient();
+  const tasksQ = useOpenTasks();
+  const today = appDay();
+
+  return async (): Promise<{ ok: boolean; message: string }> => {
+    const state = data?.state;
+    const req = state?.request;
+    if (!state || !req || req.done || req.day !== today) return { ok: false, message: "No open request." };
+    if (req.kind === "anchor" && req.targetSlug) {
+      const cached = qc.getQueryData(["ds_anchor_log", session?.user.id, today]) as
+        | Record<string, { status: string }>
+        | undefined;
+      if (cached?.[req.targetSlug]?.status !== "done") {
+        return { ok: false, message: "Not done yet — do it for real first." };
+      }
+    } else if (req.kind === "zero_overdue") {
+      const overdue = (tasksQ.data ?? []).filter((t) => t.due_on && t.due_on < today).length;
+      if (overdue > 0) return { ok: false, message: `${overdue} still overdue — clear the map first.` };
+    } else if (req.kind === "furnish") {
+      return { ok: false, message: "Place a furniture piece in any home — it claims itself." };
+    }
+    const next = await awardRequest(state, today);
+    save.mutate(next);
+    return { ok: true, message: "Request fulfilled! +10 XP, +2 bond 💛" };
   };
 }
 

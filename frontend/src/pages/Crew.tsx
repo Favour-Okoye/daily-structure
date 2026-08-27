@@ -6,9 +6,24 @@ import {
   useCompleteQuestDay,
   useCrew,
   useStartComeback,
+  useVillage,
   type CrewMember,
 } from "../lib/crewQueries";
-import { CHAR_META, FORM_NAMES, LEVEL_BOND_GATE, LEVEL_COST, maxLevel, QUEST_STEPS } from "../lib/crew";
+import {
+  CHAR_META,
+  COMFY_FURNITURE,
+  FORM_NAMES,
+  FURNITURE,
+  furnitureById,
+  HOME_THEMES,
+  HOUSE_COST,
+  isComfy,
+  LEVEL_BOND_GATE,
+  LEVEL_COST,
+  maxLevel,
+  QUEST_STEPS,
+  THEME_COST,
+} from "../lib/crew";
 import { useAuth } from "../lib/auth";
 
 export function Crew() {
@@ -17,8 +32,15 @@ export function Crew() {
   const startComeback = useStartComeback();
   const completeQuestDay = useCompleteQuestDay();
   const buyLevel = useBuyLevel();
+  const village = useVillage();
   const [note, setNote] = useState("");
   const [flash, setFlash] = useState<string | null>(null);
+  const [placing, setPlacing] = useState<string | null>(null);
+
+  const say = (message: string) => {
+    setFlash(message);
+    window.setTimeout(() => setFlash(null), 3600);
+  };
 
   if (!session) {
     return (
@@ -180,6 +202,127 @@ export function Crew() {
             )}
           </div>
         ))}
+      </div>
+
+      {/* The village */}
+      <div className="rounded-3xl bg-white p-4 shadow-sm ring-1 ring-sky-100">
+        <h2 className="text-sm font-black text-sky-900">🏘️ The village</h2>
+        <p className="mt-0.5 text-[11px] font-semibold text-stone-400">
+          Build homes with XP. A home with {COMFY_FURNITURE}+ furnishings holds its owner one extra
+          day before a walkout — their house is a reason to stay.
+        </p>
+        <div className="mt-3 space-y-2">
+          {aboard
+            .filter((m) => !m.gone)
+            .map((m) => {
+              const home = state.village[m.id];
+              const theme = HOME_THEMES[m.id];
+              return (
+                <div key={m.id} className="rounded-2xl bg-stone-50 p-3">
+                  <div className="flex items-center gap-2">
+                    <span className="text-xl">{home.themed ? theme.emoji : home.built ? "🏠" : "🏕️"}</span>
+                    <div className="flex-1">
+                      <div className="text-xs font-black text-stone-700">
+                        {m.name}
+                        {home.themed && <span className="text-sky-600"> · {theme.title}</span>}
+                        {isComfy(home) && <span className="text-amber-600"> · comfy ✨</span>}
+                      </div>
+                      {home.built ? (
+                        <div className="mt-1 flex flex-wrap gap-1">
+                          {home.furniture.map((f, i) => (
+                            <button
+                              key={`${f}-${i}`}
+                              onClick={() => village.removeFurniture(m.id, i)}
+                              title={`${furnitureById(f)?.title} (tap to put back)`}
+                              className="rounded-lg bg-white px-1.5 py-0.5 text-sm shadow-sm"
+                            >
+                              {furnitureById(f)?.emoji}
+                            </button>
+                          ))}
+                          {home.furniture.length === 0 && (
+                            <span className="text-[10px] font-bold text-stone-300">empty — needs warmth</span>
+                          )}
+                        </div>
+                      ) : (
+                        <span className="text-[10px] font-bold text-stone-400">sleeping under the stars</span>
+                      )}
+                    </div>
+                    {!home.built ? (
+                      <button
+                        onClick={() => say(village.buildOrTheme(m.id).message)}
+                        className="rounded-full bg-sky-900 px-3 py-1.5 text-[10px] font-black text-white hover:bg-sky-800"
+                      >
+                        Build 🏠 {HOUSE_COST}
+                      </button>
+                    ) : !home.themed ? (
+                      <button
+                        onClick={() => say(village.buildOrTheme(m.id).message)}
+                        className="rounded-full bg-stone-200 px-3 py-1.5 text-[10px] font-black text-stone-600 hover:bg-amber-100"
+                      >
+                        {theme.emoji} {theme.title} {THEME_COST}
+                      </button>
+                    ) : null}
+                    {placing && home.built && (
+                      <button
+                        onClick={() => {
+                          void village.placeFurniture(m.id, placing).then((r) => {
+                            say(r.message);
+                            if (r.ok) setPlacing(null);
+                          });
+                        }}
+                        className="soft-pulse rounded-full bg-amber-400 px-3 py-1.5 text-[10px] font-black text-sky-950"
+                      >
+                        Place here ✚
+                      </button>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+        </div>
+
+        {/* Inventory + shop */}
+        {(state.furnitureInv.length > 0 || true) && (
+          <div className="mt-3 border-t border-stone-100 pt-3">
+            {state.furnitureInv.length > 0 && (
+              <>
+                <p className="text-[10px] font-black text-stone-400">
+                  YOUR CRATE — tap an item, then “Place here” on a home
+                </p>
+                <div className="mt-1 flex flex-wrap gap-1.5">
+                  {state.furnitureInv.map((f, i) => (
+                    <button
+                      key={`${f}-${i}`}
+                      onClick={() => setPlacing(placing === f ? null : f)}
+                      className={`rounded-xl px-2 py-1 text-lg shadow-sm ${
+                        placing === f ? "bg-amber-300 ring-2 ring-amber-500" : "bg-stone-50"
+                      }`}
+                      title={furnitureById(f)?.title}
+                    >
+                      {furnitureById(f)?.emoji}
+                    </button>
+                  ))}
+                </div>
+              </>
+            )}
+            <p className="mt-2 text-[10px] font-black text-stone-400">FURNITURE SHOP</p>
+            <div className="mt-1 flex flex-wrap gap-1.5">
+              {FURNITURE.filter((f) => f.cost > 0).map((f) => (
+                <button
+                  key={f.id}
+                  onClick={() => say(village.buyFurniture(f.id).message)}
+                  className="rounded-xl bg-stone-50 px-2 py-1 text-[10px] font-bold text-stone-600 hover:bg-amber-50"
+                  title={f.title}
+                >
+                  {f.emoji} {f.cost}
+                </button>
+              ))}
+            </div>
+            <p className="mt-1.5 text-[9px] font-bold text-stone-300">
+              🐠 🔭 🏆 🧰 only come from playtime prizes (coming next).
+            </p>
+          </div>
+        )}
       </div>
 
       {/* Locked */}

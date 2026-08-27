@@ -23,8 +23,9 @@ import { useAuth } from "../lib/auth";
 import { supabaseConfigured } from "../lib/supabase";
 import { QuietTimeGate, quietStartedAt } from "../components/QuietTimeGate";
 import { CeremonyGate } from "../components/CeremonyGate";
-import { useAdvanceSkill, useCrew, useGrace } from "../lib/crewQueries";
-import { SKILL_DECK } from "../lib/crew";
+import { useAdvanceSkill, useClaimRequest, useCrew, useGrace } from "../lib/crewQueries";
+import { CHAR_META, SKILL_DECK } from "../lib/crew";
+import { Chibi } from "../components/chibi/Chibi";
 import { useCompleteTask, useDayPlan, useOpenTasks, type DsTask } from "../lib/tasksQueries";
 import type { PlanSlot } from "../lib/planner";
 import { awardCustom, DS_XP } from "../lib/xp";
@@ -133,6 +134,7 @@ export function Today() {
   const { aboard, state: crewState } = useCrew();
   const { left: graceLeft, grace } = useGrace();
   const advanceSkill = useAdvanceSkill();
+  const claimRequest = useClaimRequest();
 
   // Task/skill slots from the plan approved at last night's ceremony.
   const planQ = useDayPlan(day);
@@ -330,6 +332,48 @@ export function Today() {
             them →
           </p>
         </Link>
+      )}
+
+      {crewState?.request && crewState.request.day === day && (
+        <div
+          className={`flex items-center gap-3 rounded-3xl bg-white p-3 shadow-sm ring-1 ${
+            crewState.request.done ? "ring-sky-100 opacity-70" : "ring-2 ring-sky-300"
+          }`}
+        >
+          <Chibi
+            char={crewState.request.charId}
+            mood={crewState.request.done ? "happy" : "neutral"}
+            size={56}
+          />
+          <div className="min-w-0 flex-1">
+            <div className="text-[10px] font-black text-sky-600">
+              {CHAR_META[crewState.request.charId].name.toUpperCase()} ASKS
+            </div>
+            <p className="text-xs font-bold text-stone-700">“{crewState.request.text}”</p>
+          </div>
+          {crewState.request.done ? (
+            <span className="text-xl">💛</span>
+          ) : crewState.request.kind !== "furnish" ? (
+            <button
+              onClick={() =>
+                void claimRequest().then((r) => {
+                  setFlash(r.message);
+                  window.setTimeout(() => setFlash(null), 4000);
+                })
+              }
+              className="shrink-0 rounded-full bg-sky-900 px-3 py-1.5 text-[10px] font-black text-white hover:bg-sky-800"
+            >
+              Claim +10
+            </button>
+          ) : (
+            <Link
+              to="/crew"
+              className="shrink-0 rounded-full bg-sky-900 px-3 py-1.5 text-[10px] font-black text-white"
+            >
+              To the village →
+            </Link>
+          )}
+        </div>
       )}
 
       {/* Timeline */}

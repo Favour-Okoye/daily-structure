@@ -108,7 +108,28 @@ export interface CrewState {
   weekly: { weekKey: string; picks: string[]; settled: boolean } | null;
   settledGoalWeeks: number;
   skillPointer: number;
+  /** The village: each character's home, built and furnished with XP. */
+  village: Record<CharId, HomeState>;
+  /** Furniture owned but not yet placed (shop buys + puzzle drops). */
+  furnitureInv: string[];
+  /** Today's character request, if one came. */
+  request: CharRequest | null;
   log: { day: string; text: string }[];
+}
+
+export interface HomeState {
+  built: boolean;
+  themed: boolean;
+  furniture: string[]; // item ids in slots, max HOME_SLOTS
+}
+
+export interface CharRequest {
+  day: string;
+  charId: CharId;
+  kind: "anchor" | "furnish" | "zero_overdue";
+  targetSlug: string | null;
+  text: string;
+  done: boolean;
 }
 
 function defaultChar(id: CharId, startedOn: string): CharState {
@@ -158,6 +179,20 @@ export function normalizeCrew(raw: unknown, today: string): CrewState {
     weekly: r.weekly ?? null,
     settledGoalWeeks: r.settledGoalWeeks ?? 0,
     skillPointer: r.skillPointer ?? 0,
+    village: (() => {
+      const v = {} as Record<CharId, HomeState>;
+      for (const id of ALL_CHARS) {
+        const h = (r.village?.[id] ?? {}) as Partial<HomeState>;
+        v[id] = {
+          built: h.built ?? false,
+          themed: h.themed ?? false,
+          furniture: (h.furniture ?? []).slice(0, HOME_SLOTS),
+        };
+      }
+      return v;
+    })(),
+    furnitureInv: r.furnitureInv ?? [],
+    request: r.request ?? null,
     log: (r.log ?? []).slice(0, 60),
   };
 }
@@ -626,4 +661,111 @@ export const FORM_NAMES: Record<CharId, string[]> = {
 
 export function maxLevel(id: CharId): number {
   return FORM_NAMES[id].length;
+}
+
+/* ------------------------------------------------------------------ */
+/* The village (Phase 6)                                               */
+/* ------------------------------------------------------------------ */
+
+export const HOME_SLOTS = 6;
+export const HOUSE_COST = 300;
+export const THEME_COST = 500;
+/** A built home with 4+ pieces of furniture buys one extra day before a walkout. */
+export const COMFY_FURNITURE = 4;
+
+export const HOME_THEMES: Record<CharId, { title: string; emoji: string }> = {
+  luffy: { title: "Captain's Galley", emoji: "🍖" },
+  zoro: { title: "Training Dojo", emoji: "⚔️" },
+  nami: { title: "Map Room", emoji: "🗺️" },
+  usopp: { title: "Inventor's Workshop", emoji: "🔧" },
+  sanji: { title: "Sea Kitchen", emoji: "🍳" },
+  chopper: { title: "Little Clinic", emoji: "💊" },
+  robin: { title: "Quiet Library", emoji: "📚" },
+  naruto: { title: "Ramen Corner", emoji: "🍜" },
+  sasuke: { title: "Hawk's Roost", emoji: "🦅" },
+  sakura: { title: "Blossom Yard", emoji: "🌸" },
+  kakashi: { title: "Reading Nook", emoji: "📖" },
+  hinata: { title: "Prayer Garden", emoji: "🌿" },
+};
+
+export interface FurnitureDef {
+  id: string;
+  title: string;
+  emoji: string;
+  cost: number; // 0 = puzzle-drop only
+  rare?: boolean;
+}
+
+export const FURNITURE: FurnitureDef[] = [
+  { id: "photo", title: "Framed photo", emoji: "🖼️", cost: 50 },
+  { id: "plant", title: "Potted plant", emoji: "🪴", cost: 60 },
+  { id: "lamp", title: "Oil lamp", emoji: "🪔", cost: 60 },
+  { id: "teapot", title: "Tea set", emoji: "🫖", cost: 60 },
+  { id: "banner", title: "Crew banner", emoji: "🚩", cost: 70 },
+  { id: "rug", title: "Woven rug", emoji: "🧶", cost: 70 },
+  { id: "clock", title: "Wall clock", emoji: "🕰️", cost: 80 },
+  { id: "lantern", title: "Paper lantern", emoji: "🏮", cost: 80 },
+  { id: "cushion", title: "Floor cushions", emoji: "🛋️", cost: 90 },
+  { id: "bookshelf", title: "Bookshelf", emoji: "📚", cost: 90 },
+  { id: "weights", title: "Training weights", emoji: "🏋️", cost: 100 },
+  { id: "maptable", title: "Chart table", emoji: "🧭", cost: 120 },
+  // puzzle-drop only:
+  { id: "goldfish", title: "Goldfish bowl", emoji: "🐠", cost: 0 },
+  { id: "telescope", title: "Brass telescope", emoji: "🔭", cost: 0, rare: true },
+  { id: "trophy", title: "Golden trophy", emoji: "🏆", cost: 0, rare: true },
+  { id: "chest", title: "Treasure chest", emoji: "🧰", cost: 0, rare: true },
+];
+
+export function furnitureById(id: string): FurnitureDef | undefined {
+  return FURNITURE.find((f) => f.id === id);
+}
+
+export function isComfy(home: HomeState): boolean {
+  return home.built && home.furniture.length >= COMFY_FURNITURE;
+}
+
+/** Walkout thresholds, stretched one day by a comfy home. */
+export function walkoutThresholds(home: HomeState): { packing: number; gone: number } {
+  const bonus = isComfy(home) ? 1 : 0;
+  return { packing: WALKOUT_PACKING + bonus, gone: WALKOUT_GONE + bonus };
+}
+
+/* ------------------------------------------------------------------ */
+/* Character requests (Phase 6)                                        */
+/* ------------------------------------------------------------------ */
+
+/** Tiny deterministic hash for a day string (same day → same request). */
+export function seededHash(s: string): number {
+  let h = 2166136261;
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return Math.abs(h);
+}
+
+const REQUEST_TEXT: Partial<Record<CharId, { kind: CharRequest["kind"]; targetSlug: string | null; text: string }>> = {
+  luffy: { kind: "anchor", targetSlug: "devotional", text: "Oi! Start the day with me — devotional before anything else!" },
+  zoro: { kind: "anchor", targetSlug: "exercise", text: "Train with me today. No excuses, no shortcuts." },
+  nami: { kind: "zero_overdue", targetSlug: null, text: "Zero overdue tasks by tonight — the map stays clean." },
+  usopp: { kind: "anchor", targetSlug: "skill_block", text: "Learn one thing today and I'll turn it into a legend!" },
+  sanji: { kind: "anchor", targetSlug: "book", text: "Feed your future — read those chapters today." },
+  chopper: { kind: "anchor", targetSlug: "quiet_time", text: "Doctor's orders: real quiet time today. Phone face-down!" },
+  robin: { kind: "anchor", targetSlug: "money_tree", text: "Fufufu… the Money Tree videos. Knowledge compounds." },
+  naruto: { kind: "anchor", targetSlug: "noon_prayer", text: "Midday check-in — don't skip the noon prayer, dattebayo!" },
+  hinata: { kind: "anchor", targetSlug: "bible", text: "Would you… read a chapter with me today?" },
+  sakura: { kind: "furnish", targetSlug: null, text: "This place could use a woman's touch — place one furniture today!" },
+  kakashi: { kind: "anchor", targetSlug: "quiet_time", text: "Sit still for ten minutes. The best shinobi read the silence." },
+  sasuke: { kind: "anchor", targetSlug: "exercise", text: "Hn. Train. Strength isn't given." },
+};
+
+/** ~55% of days one recruited character asks for something. Deterministic per day. */
+export function requestForDay(day: string, recruited: CharId[]): CharRequest | null {
+  if (recruited.length === 0) return null;
+  const h = seededHash(day);
+  if (h % 100 >= 55) return null;
+  const charId = recruited[h % recruited.length];
+  const plan = REQUEST_TEXT[charId];
+  if (!plan) return null;
+  return { day, charId, kind: plan.kind, targetSlug: plan.targetSlug, text: plan.text, done: false };
 }

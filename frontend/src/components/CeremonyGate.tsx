@@ -1,14 +1,11 @@
 import { useEffect, useMemo, useState } from "react";
 import { appDay, daySortKey, fmtMin, shiftDay } from "../lib/day";
-import { type Season } from "../lib/anchors";
 import { buildPlan, type DayPlan } from "../lib/planner";
-import { useSettings } from "../lib/queries";
+import { useSeason, useSettings } from "../lib/queries";
 import { useApprovePlan, useCrew } from "../lib/crewQueries";
 import { useEvents, useOpenTasks } from "../lib/tasksQueries";
 import { useXpDays } from "../lib/stats";
 import { Chibi } from "./chibi/Chibi";
-
-const SEASON: Season = "gap";
 
 type Stage = "confession" | "summary" | "tomorrow";
 
@@ -54,6 +51,7 @@ export function CeremonyGate({
 
   const tasksQ = useOpenTasks();
   const eventsQ = useEvents();
+  const SEASON = useSeason();
   const fridayOnline = !!(settingsQ.data?.data as { fridayOnline?: boolean } | undefined)?.fridayOnline;
 
   const built = useMemo(() => {
@@ -68,7 +66,7 @@ export function CeremonyGate({
       .filter((e) => e.day === tomorrow)
       .map((e) => ({ id: e.id, title: e.title, day: e.day, start_min: e.start_min, end_min: e.end_min }));
     return buildPlan(tomorrow, SEASON, tasks, events, { fridayOnline });
-  }, [tomorrow, tasksQ.data, eventsQ.data, fridayOnline]);
+  }, [tomorrow, tasksQ.data, eventsQ.data, fridayOnline, SEASON]);
 
   // Local adjustable copy — Nami proposes, Favour disposes.
   const [plan, setPlan] = useState<DayPlan | null>(null);

@@ -100,6 +100,27 @@ describe("buildPlan", () => {
   });
 });
 
+describe("work season", () => {
+  it("weekdays trade the rest block for the office and shift exercise to evening", () => {
+    const plan = buildPlan("2026-09-07", "work", [], []); // a Monday
+    expect(plan.slots.find((s) => s.refId === "workday")?.locked).toBe(true);
+    expect(plan.slots.some((s) => s.kind === "rest")).toBe(false);
+    const exercise = plan.slots.find((s) => s.refId === "exercise");
+    expect(exercise?.startMin).toBe(18 * 60 + 45);
+    expect(plan.slots.some((s) => s.kind === "skill")).toBe(false); // weekdays: no skill block
+  });
+  it("Saturday keeps rest and allows the skill block", () => {
+    const plan = buildPlan("2026-09-05", "work", [], []); // a Saturday
+    expect(plan.slots.some((s) => s.kind === "rest")).toBe(true);
+    expect(plan.slots.some((s) => s.kind === "skill")).toBe(true);
+  });
+  it("gap season still protects the rest block", () => {
+    const plan = buildPlan("2026-09-07", "gap", [], []);
+    expect(plan.slots.some((s) => s.kind === "rest")).toBe(true);
+    expect(plan.slots.some((s) => s.refId === "workday")).toBe(false);
+  });
+});
+
 describe("urgencyOf", () => {
   it("ramps calm → soon → urgent → today → overdue", () => {
     const day = "2026-08-27";

@@ -46,10 +46,13 @@ Push to `main` → GitHub Actions builds and deploys to GitHub Pages
 ## Roadmap
 
 1. ✅ Walk the deck — anchors, timeline, XP, streaks, quiet-time gate
-2. The crew boards — Luffy/Zoro/Nami, moods, nightly confession ceremony
-3. Chart the course — tasks, urgency, the time-slot planner
-4. Nakama — all 12 characters, walkouts, comeback quests, level forms
-5. Steady seas — grace tokens, skill deck, voyage log, MoneyTree auto-detect
-6. The village — build and furnish each character's home
-7. Playtime — play tickets + block puzzle with the crew
-8. Work season — September-ready retuning
+2. ✅ The crew boards — Luffy/Zoro/Nami, moods, nightly confession ceremony
+3. ✅ Chart the course — tasks, urgency, the time-slot planner
+4. ✅ Nakama — all 12 characters, walkouts, comeback quests, level forms
+5. ✅ Steady seas — grace tokens, skill deck, weekly goals, MoneyTree auto-detect
+6. ✅ The village — build and furnish each character's home (comfy = +1 walkout day)
+7. ✅ Playtime — play tickets + block puzzle with the crew (bond & furniture, never XP)
+8. ✅ Work season — September retuning via More → Season
+
+Later ideas: match-3 as a second ticket game, photo-proof grace, push
+nudges via Actions cron → ntfy.sh, sister accountability sharing.

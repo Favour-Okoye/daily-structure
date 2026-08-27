@@ -165,9 +165,23 @@ export const REST_BLOCK = { startMin: 16 * 60, endMin: 19 * 60, title: "Rest", e
 
 export type AnchorForDay = AnchorDef & { required: boolean };
 
+/** Work-season retuning: shorter mornings, evening exercise, lighter learning.
+ *  History is untouched — only expectations and times change. */
+const WORK_OVERRIDES: Record<string, Partial<AnchorDef>> = {
+  devotional: { startMin: 7 * 60, endMin: 7 * 60 + 30, minutes: 30 },
+  exercise: { startMin: 18 * 60 + 45, endMin: 19 * 60 + 15, hint: "Evening session — Zoro still counts reps." },
+  noon_prayer: { startMin: 12 * 60 + 30, endMin: 13 * 60, minutes: 30, hint: "Lunch-break prayer." },
+  money_tree: { title: "Money Tree — 1 video", xp: 10, minutes: 20, hint: "One video keeps the tree alive on work days." },
+  quiet_time: { suggestMin: 20 * 60, hint: "10 min after work. Phone face-down." },
+  bible: { suggestMin: 21 * 60 + 30 },
+};
+
 export function anchorsForDay(day: string, season: Season): AnchorForDay[] {
   const wd = weekdayOf(day);
-  return ANCHORS.map((a) => ({ ...a, required: a.requiredOn(wd, season) }));
+  return ANCHORS.map((a) => {
+    const base = season === "work" ? { ...a, ...(WORK_OVERRIDES[a.slug] ?? {}) } : a;
+    return { ...base, required: a.requiredOn(wd, season) };
+  });
 }
 
 export function churchForDay(day: string): ChurchEvent[] {

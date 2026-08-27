@@ -34,12 +34,10 @@ import {
   type LogRow,
   type Mood,
 } from "./crew";
-import type { Season } from "./anchors";
 import { useOpenTasks } from "./tasksQueries";
 import { computeStreak, useXpDays } from "./stats";
 import { awardCustom, DS_XP } from "./xp";
-
-const SEASON: Season = "gap";
+import { useSeason } from "./queries";
 
 /** ds_anchor_log rows for the last `span` app-days (crew mood window). */
 export function useAnchorRange(span = 14) {
@@ -168,6 +166,7 @@ export function useCrew() {
   const countsQ = useLifetimeCounts();
   const xpDaysQ = useXpDays();
   const save = useSaveCrew();
+  const SEASON = useSeason();
   const maintained = useRef<string | null>(null);
   const today = appDay();
 
@@ -347,6 +346,7 @@ export function useCompleteQuestDay() {
   const save = useSaveCrew();
   const { session } = useAuth();
   const qc = useQueryClient();
+  const SEASON = useSeason();
   const today = appDay();
   const logQ = useQuery({
     queryKey: ["ds_anchor_log", session?.user.id, today],

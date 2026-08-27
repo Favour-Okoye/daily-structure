@@ -1,7 +1,13 @@
 import { useEffect, useState } from "react";
 import { useAuth } from "../lib/auth";
 import { supabase } from "../lib/supabase";
-import { useSaveConfession, useSaveSettingsData, useSettings } from "../lib/queries";
+import {
+  useSaveConfession,
+  useSaveSettingsData,
+  useSeason,
+  useSetSeason,
+  useSettings,
+} from "../lib/queries";
 
 export function More() {
   const { session } = useAuth();
@@ -49,6 +55,8 @@ export function More() {
         </button>
       </div>
 
+      <SeasonToggle />
+
       <FridayToggle />
 
       <div className="rounded-3xl bg-white p-4 shadow-sm ring-1 ring-sky-100">
@@ -69,6 +77,42 @@ export function More() {
           Sign out (both apps)
         </button>
       )}
+    </div>
+  );
+}
+
+function SeasonToggle() {
+  const { session } = useAuth();
+  const season = useSeason();
+  const setSeason = useSetSeason();
+  return (
+    <div className="rounded-3xl bg-white p-4 shadow-sm ring-1 ring-sky-100">
+      <h2 className="text-sm font-black text-sky-900">🍂 Season</h2>
+      <p className="mt-1 text-xs font-semibold text-stone-400">
+        Gap = the full daily voyage. Work = September mode: shorter mornings, evening exercise,
+        weekday office block, book off, one Money Tree video. History is never lost — only
+        expectations change.
+      </p>
+      <div className="mt-2 flex gap-2">
+        <button
+          disabled={!session || setSeason.isPending}
+          onClick={() => setSeason.mutate("gap")}
+          className={`flex-1 rounded-full py-2 text-xs font-black ${
+            season === "gap" ? "bg-sky-900 text-white" : "bg-stone-100 text-stone-500"
+          }`}
+        >
+          Gap season 🌅
+        </button>
+        <button
+          disabled={!session || setSeason.isPending}
+          onClick={() => setSeason.mutate("work")}
+          className={`flex-1 rounded-full py-2 text-xs font-black ${
+            season === "work" ? "bg-sky-900 text-white" : "bg-stone-100 text-stone-500"
+          }`}
+        >
+          Work season 💼
+        </button>
+      </div>
     </div>
   );
 }

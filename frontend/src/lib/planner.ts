@@ -184,7 +184,13 @@ export function buildPlan(
     lock("event", ev.id, ev.title, "📌", ev.start_min, ev.end_min);
   }
 
-  lock("rest", "rest", "Rest — protected", REST_BLOCK.emoji, REST_BLOCK.startMin, REST_BLOCK.endMin);
+  // Gap season: the afternoon rest is sacred daily. Work season: office hours
+  // replace it on weekdays (block 9-17:30 for the job), rest survives weekends.
+  if (season === "work" && wd >= 1 && wd <= 5) {
+    lock("event", "workday", "Work — the September life", "💼", 9 * 60, 17 * 60 + 30);
+  } else {
+    lock("rest", "rest", "Rest — protected", REST_BLOCK.emoji, REST_BLOCK.startMin, REST_BLOCK.endMin);
+  }
 
   // ---- Flexible anchors, earliest-fit near their preferred time ----
   for (const a of anchors) {
@@ -246,11 +252,12 @@ export function buildPlan(
     }
   }
 
-  // ---- Skill block on light days ----
+  // ---- Skill block on light days (work season: weekends only) ----
   const flexiblePlaced = anchors
     .filter((a) => a.required && a.startMin === undefined && a.kind !== "ceremony")
     .every((a) => slots.some((s) => s.refId === a.slug));
-  if (placedTaskMinutes < 60 && flexiblePlaced) {
+  const skillAllowed = season !== "work" || wd === 6;
+  if (placedTaskMinutes < 60 && flexiblePlaced && skillAllowed) {
     const got = allocate(gaps, 15, 9 * 60 + 30);
     if (got) {
       gaps = got.gaps;

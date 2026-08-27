@@ -9,7 +9,6 @@ import {
   REST_BLOCK,
   type AnchorForDay,
   type ChurchEvent,
-  type Season,
 } from "../lib/anchors";
 import {
   flushOutbox,
@@ -17,6 +16,7 @@ import {
   useCheckAnchor,
   useCheckChurch,
   useMoneyTreeVideoCount,
+  useSeason,
 } from "../lib/queries";
 import { useGrowth } from "../lib/stats";
 import { useAuth } from "../lib/auth";
@@ -41,7 +41,7 @@ const SKILL_BLOCK_DEF = {
   requiredOn: () => false,
 } as unknown as AnchorForDay;
 
-const SEASON: Season = "gap"; // the season switch ships in a later phase
+// (season now comes live from the profile — gap until September, then work)
 
 interface TimelineItem {
   key: string;
@@ -77,11 +77,12 @@ export function Today() {
   }, []);
 
   const day = appDay();
+  const season = useSeason();
   const isSunday = weekdayOf(day) === 0;
   const nowMin = wallMinutes();
 
   const items = useMemo<TimelineItem[]>(() => {
-    const anchors = anchorsForDay(day, SEASON);
+    const anchors = anchorsForDay(day, season);
     const church = churchForDay(day);
     const rows: TimelineItem[] = [];
     for (const e of church) {
@@ -124,7 +125,7 @@ export function Today() {
       });
     }
     return rows.sort((x, y) => daySortKey(x.startMin) - daySortKey(y.startMin));
-  }, [day]);
+  }, [day, season]);
 
   const logQ = useAnchorLog(day);
   const log = logQ.data ?? {};
@@ -201,10 +202,10 @@ export function Today() {
   }, [mtCountQ.data, mtDone, logQ.isSuccess]);
 
   const required = useMemo(() => {
-    const slugs = requiredSlugs(day, SEASON);
+    const slugs = requiredSlugs(day, season);
     for (const e of churchForDay(day)) slugs.push(`church_${e.slug}`);
     return slugs;
-  }, [day]);
+  }, [day, season]);
   const doneRequired = required.filter((s) => log[s]).length;
   const dayComplete = logQ.isSuccess && required.length > 0 && doneRequired === required.length;
 

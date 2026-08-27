@@ -174,6 +174,45 @@ export function useCheckChurch(day: string) {
   });
 }
 
+import type { Season } from "./anchors";
+
+/** The profile row — holds the active season. */
+export function useProfile() {
+  const { session } = useAuth();
+  return useQuery({
+    queryKey: ["ds_profile", session?.user.id],
+    enabled: !!supabase && !!session,
+    staleTime: 60_000,
+    queryFn: async (): Promise<{ season: Season } | null> => {
+      const { data, error } = await supabase!.from("ds_profiles").select("season").maybeSingle();
+      if (error) throw error;
+      return (data as { season: Season } | null) ?? null;
+    },
+  });
+}
+
+/** The active season everywhere ('gap' until the profile loads). */
+export function useSeason(): Season {
+  const q = useProfile();
+  return q.data?.season ?? "gap";
+}
+
+export function useSetSeason() {
+  const { session } = useAuth();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (season: Season) => {
+      if (!supabase) throw new Error("not connected");
+      const { error } = await supabase
+        .from("ds_profiles")
+        .update({ season })
+        .eq("user_id", session?.user.id);
+      if (error) throw error;
+    },
+    onSuccess: () => void qc.invalidateQueries({ queryKey: ["ds_profile", session?.user.id] }),
+  });
+}
+
 export interface DsSettings {
   confession_lines: string[];
   data: Record<string, unknown>;

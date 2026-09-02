@@ -2,6 +2,7 @@ import { Link, Outlet } from "react-router-dom";
 import { TabBar } from "./TabBar";
 import { XpToast } from "./XpToast";
 import { CrewScene } from "./CrewScene";
+import { LandfallScene } from "./LandfallScene";
 import { useAuth } from "../lib/auth";
 import { supabase, supabaseConfigured } from "../lib/supabase";
 
@@ -38,6 +39,7 @@ export function AppShell() {
       <TabBar />
       <XpToast />
       {session && <CrewScene />}
+      {session && <LandfallScene />}
     </div>
   );
 }

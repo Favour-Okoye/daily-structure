@@ -6,8 +6,9 @@ import { VitePWA } from "vite-plugin-pwa";
 export default defineConfig({
   base: "/daily-structure/",
   // MoneyTree runs on 5173/4173; keep both apps runnable at once.
-  server: { port: 5174 },
-  preview: { port: 4174 },
+  // host: true → listen on IPv4 + IPv6 so every browser's "localhost" connects.
+  server: { port: 5174, host: true },
+  preview: { port: 4174, host: true },
   plugins: [
     react(),
     tailwindcss(),

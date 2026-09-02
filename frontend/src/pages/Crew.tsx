@@ -1,21 +1,23 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { Chibi } from "../components/chibi/Chibi";
+import { VillageScene } from "../components/VillageScene";
+import { MemoryGame } from "../components/MemoryGame";
 import {
-  useBuyLevel,
+  useCancelExam,
   useCompleteQuestDay,
   useCrew,
-  usePuzzleSession,
+  useMemorySession,
+  useRepairStorm,
   useStartComeback,
+  useStartExam,
   useTickets,
   useVillage,
-  type CrewMember,
 } from "../lib/crewQueries";
-import { PuzzleGame } from "../components/PuzzleGame";
-import type { CharId } from "../lib/crew";
 import {
   CHAR_META,
   COMFY_FURNITURE,
+  EXAMS,
   FORM_NAMES,
   FURNITURE,
   furnitureById,
@@ -26,28 +28,33 @@ import {
   LEVEL_COST,
   maxLevel,
   QUEST_STEPS,
+  STORM_REPAIR_COST,
   THEME_COST,
+  type CharId,
 } from "../lib/crew";
 import { useAuth } from "../lib/auth";
 
 export function Crew() {
   const { session } = useAuth();
-  const { loading, state, crew, aboard, wallet } = useCrew();
+  const { loading, state, crew, aboard, wallet, examInfo, storm } = useCrew();
   const startComeback = useStartComeback();
   const completeQuestDay = useCompleteQuestDay();
-  const buyLevel = useBuyLevel();
+  const startExam = useStartExam();
+  const cancelExam = useCancelExam();
+  const repairStorm = useRepairStorm();
   const village = useVillage();
   const tickets = useTickets();
-  const puzzle = usePuzzleSession();
+  const memory = useMemorySession();
   const [note, setNote] = useState("");
   const [flash, setFlash] = useState<string | null>(null);
   const [placing, setPlacing] = useState<string | null>(null);
   const [picking, setPicking] = useState(false);
   const [playing, setPlaying] = useState<CharId | null>(null);
+  const cardRefs = useRef<Record<string, HTMLDivElement | null>>({});
 
   const say = (message: string) => {
     setFlash(message);
-    window.setTimeout(() => setFlash(null), 3600);
+    window.setTimeout(() => setFlash(null), 3800);
   };
 
   if (!session) {
@@ -67,34 +74,31 @@ export function Crew() {
   }
 
   const quest = state.comeback;
-  const questChar = quest ? crew.find((c) => c.id === quest.charId) : null;
   const locked = crew.filter((c) => !c.recruited);
-
-  const tryBuy = (m: CrewMember) => {
-    const res = buyLevel(m.id, m.bond);
-    setFlash(res.message);
-    window.setTimeout(() => setFlash(null), 3200);
-  };
+  const visible = aboard.filter((m) => !m.gone);
 
   const tryQuestDay = async () => {
     const res = await completeQuestDay(note);
-    setFlash(res.message);
+    say(res.message);
     if (res.ok) setNote("");
-    window.setTimeout(() => setFlash(null), 4200);
   };
 
   return (
     <div className="space-y-4">
-      <div className="rounded-3xl bg-gradient-to-b from-sky-200 to-sky-50 p-4 shadow-sm ring-1 ring-sky-100">
-        <div className="flex items-baseline justify-between">
-          <h1 className="text-lg font-black text-sky-900">The crew</h1>
-          <span className="rounded-full bg-white/70 px-3 py-1 text-xs font-black text-sky-800">
-            💰 {wallet} XP to spend
-          </span>
-        </div>
-        <p className="mt-1 text-xs font-semibold text-sky-800/70">
-          {aboard.length} aboard · {locked.length} to recruit. They live off your real days.
-        </p>
+      {/* THE LIVING VILLAGE */}
+      <VillageScene
+        aboard={visible}
+        state={state}
+        onPick={(id) => cardRefs.current[id]?.scrollIntoView({ behavior: "smooth", block: "center" })}
+      />
+
+      <div className="flex items-center justify-between rounded-3xl bg-white px-4 py-2.5 shadow-sm ring-1 ring-sky-100">
+        <span className="text-xs font-black text-stone-500">
+          {aboard.length} aboard · {locked.length} to recruit
+        </span>
+        <span className="rounded-full bg-amber-50 px-3 py-1 text-xs font-black text-amber-700">
+          💰 {wallet} XP to spend
+        </span>
       </div>
 
       {flash && (
@@ -103,8 +107,53 @@ export function Crew() {
         </div>
       )}
 
-      {/* Active comeback quest */}
-      {quest && questChar && (
+      {/* Storm damage */}
+      {storm && (
+        <div className="rounded-3xl bg-white p-4 shadow-md ring-2 ring-stone-300">
+          <p className="text-sm font-black text-stone-700">
+            ⛈️ A storm damaged {CHAR_META[storm.charId].name}'s home!
+          </p>
+          <p className="mt-0.5 text-xs font-semibold text-stone-400">
+            Homes with {2}+ furnishings hold in storms. Bare walls don't.
+          </p>
+          <button
+            onClick={() => say(repairStorm().message)}
+            className="mt-2 w-full rounded-full bg-sky-900 py-2 text-xs font-black text-white hover:bg-sky-800"
+          >
+            🔨 Repair — {STORM_REPAIR_COST} XP
+          </button>
+        </div>
+      )}
+
+      {/* Active level contract */}
+      {examInfo && (
+        <div className="rounded-3xl bg-white p-4 shadow-md ring-2 ring-sky-300">
+          <div className="flex items-center gap-3">
+            <Chibi char={examInfo.charId} mood="neutral" size={60} />
+            <div className="flex-1">
+              <h2 className="text-sm font-black text-stone-800">
+                {CHAR_META[examInfo.charId].name}'s trial → “{FORM_NAMES[examInfo.charId][examInfo.targetLevel - 1]}”
+              </h2>
+              <p className="mt-0.5 text-xs font-semibold text-stone-500">{examInfo.desc}</p>
+              <div className="mt-1.5 h-2.5 w-full overflow-hidden rounded-full bg-stone-100">
+                <div
+                  className="h-full rounded-full bg-sky-500 transition-all"
+                  style={{ width: `${(examInfo.have / examInfo.needed) * 100}%` }}
+                />
+              </div>
+              <div className="mt-0.5 flex justify-between text-[10px] font-black text-stone-400">
+                <span>{examInfo.have} / {examInfo.needed} days</span>
+                <button onClick={() => { cancelExam(); say("Trial set aside — tuition returned."); }} className="text-rose-400">
+                  cancel (full refund)
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Comeback quest */}
+      {quest && (
         <div className="rounded-3xl bg-white p-4 shadow-md ring-2 ring-amber-300">
           <div className="flex items-center gap-3">
             <Chibi char={quest.charId} mood="sad" size={72} />
@@ -114,16 +163,11 @@ export function Crew() {
               </h2>
               <p className="mt-0.5 text-xs font-bold text-amber-700">
                 {QUEST_STEPS[Math.min(quest.daysDone, 2)].title}:{" "}
-                <span className="font-semibold text-stone-500">
-                  {QUEST_STEPS[Math.min(quest.daysDone, 2)].detail}
-                </span>
+                <span className="font-semibold text-stone-500">{QUEST_STEPS[Math.min(quest.daysDone, 2)].detail}</span>
               </p>
               <div className="mt-1.5 flex gap-1">
                 {[0, 1, 2].map((i) => (
-                  <span
-                    key={i}
-                    className={`h-2 w-8 rounded-full ${i < quest.daysDone ? "bg-amber-400" : "bg-stone-100"}`}
-                  />
+                  <span key={i} className={`h-2 w-8 rounded-full ${i < quest.daysDone ? "bg-amber-400" : "bg-stone-100"}`} />
                 ))}
               </div>
             </div>
@@ -143,67 +187,61 @@ export function Crew() {
           >
             {quest.daysDone === 2 ? "Deliver the apology 🕊️" : "Complete today's step"}
           </button>
-          <p className="mt-2 text-center text-[10px] font-bold text-stone-400">
-            Grace tokens can't excuse quest days. Sasuke respects only the real thing.
-          </p>
         </div>
       )}
 
-      {/* Aboard */}
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+      {/* Crew cards */}
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
         {aboard.map((m) => (
           <div
             key={m.id}
-            className={`flex flex-col items-center rounded-3xl bg-white p-4 text-center shadow-sm ring-1 ${
-              m.gone ? "ring-stone-200" : "ring-sky-100"
-            }`}
+            ref={(el) => { cardRefs.current[m.id] = el; }}
+            className={`rounded-3xl bg-white p-4 shadow-sm ring-1 ${m.gone ? "ring-stone-200" : "ring-sky-100"}`}
           >
-            <Chibi char={m.id} mood={m.mood} level={m.level} size={104} />
-            <div className="mt-1 flex items-center gap-1.5">
-              <span className="text-base font-black text-stone-800">{m.name}</span>
-              <span className="text-lg">{m.moodEmoji}</span>
-            </div>
-            <div className="text-[11px] font-bold text-stone-400">{m.role}</div>
-            <div className="mt-0.5 rounded-full bg-sky-50 px-2 py-0.5 text-[10px] font-black text-sky-700">
-              {m.formName} · Lv {m.level}
-            </div>
-
-            {m.gone ? (
-              <div className="mt-3 w-full">
-                <p className="text-xs font-bold text-stone-500">
-                  Gone since {state.characters[m.id].goneSince}. The spot feels empty.
-                </p>
-                <button
-                  disabled={!!quest}
-                  onClick={() => startComeback(m.id)}
-                  className="mt-2 w-full rounded-full bg-sky-900 py-2 text-xs font-black text-white transition enabled:hover:bg-sky-800 disabled:opacity-40"
-                >
-                  {quest ? "Finish the current quest first" : "Go after them 🏃"}
-                </button>
-              </div>
-            ) : (
-              <>
-                {m.line && (
-                  <p className="mt-2 rounded-2xl bg-sky-50 px-3 py-1.5 text-[11px] font-semibold text-sky-900">
-                    “{m.line}”
-                  </p>
-                )}
-                <div className="mt-3 w-full">
-                  <div className="flex justify-between text-[10px] font-black text-stone-400">
+            <div className="flex items-center gap-3">
+              <Chibi char={m.id} mood={m.mood} level={m.level} size={76} />
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center gap-1.5">
+                  <span className="text-base font-black text-stone-800">{m.name}</span>
+                  <span>{m.moodEmoji}</span>
+                  <span className="rounded-full bg-sky-50 px-2 py-0.5 text-[9px] font-black text-sky-700">
+                    {m.formName} · Lv {m.level}
+                  </span>
+                </div>
+                <div className="text-[11px] font-bold text-stone-400">{m.role}</div>
+                <div className="mt-0.5 text-[10px] font-semibold text-sky-600">↳ {m.moodWhy}</div>
+                <div className="mt-1.5">
+                  <div className="flex justify-between text-[9px] font-black text-stone-400">
                     <span>{m.tier}</span>
                     <span>{m.bond}/100</span>
                   </div>
-                  <div className="mt-1 h-2 w-full overflow-hidden rounded-full bg-stone-100">
+                  <div className="mt-0.5 h-1.5 w-full overflow-hidden rounded-full bg-stone-100">
                     <div className="h-full rounded-full bg-amber-400 transition-all" style={{ width: `${m.bond}%` }} />
                   </div>
                 </div>
-                {m.level < maxLevel(m.id) && (
+              </div>
+            </div>
+
+            {m.gone ? (
+              <button
+                disabled={!!quest}
+                onClick={() => startComeback(m.id)}
+                className="mt-2 w-full rounded-full bg-sky-900 py-2 text-xs font-black text-white transition enabled:hover:bg-sky-800 disabled:opacity-40"
+              >
+                {quest ? "Finish the current quest first" : `Go after ${m.name} 🏃`}
+              </button>
+            ) : (
+              <>
+                {m.line && (
+                  <p className="mt-2 rounded-2xl bg-sky-50 px-3 py-1.5 text-[11px] font-semibold text-sky-900">“{m.line}”</p>
+                )}
+                {m.level < maxLevel(m.id) && !examInfo && !state.exam && (
                   <button
-                    onClick={() => tryBuy(m)}
-                    className="mt-2 w-full rounded-full bg-stone-100 py-1.5 text-[11px] font-black text-stone-600 hover:bg-amber-100"
-                    title={`Needs bond ${LEVEL_BOND_GATE[m.level + 1]}+ and ${LEVEL_COST[m.level + 1]} XP`}
+                    onClick={() => say(startExam(m.id, m.bond).message)}
+                    className="mt-2 w-full rounded-full bg-stone-100 py-1.5 text-[11px] font-black text-stone-600 hover:bg-sky-50"
+                    title={`Bond ${LEVEL_BOND_GATE[m.level + 1]}+ · tuition ${LEVEL_COST[m.level + 1]} XP · then: ${EXAMS[m.id].text(EXAMS[m.id].needed[m.level - 1] ?? 3)}`}
                   >
-                    ⚡ Unlock “{FORM_NAMES[m.id][m.level]}” — {LEVEL_COST[m.level + 1]} XP
+                    📜 Begin trial for “{FORM_NAMES[m.id][m.level]}” — {LEVEL_COST[m.level + 1]} XP tuition
                   </button>
                 )}
               </>
@@ -212,41 +250,37 @@ export function Crew() {
         ))}
       </div>
 
-      {/* Playtime */}
+      {/* Playtime — Crew Memory */}
       <div className="rounded-3xl bg-white p-4 shadow-sm ring-1 ring-sky-100">
         <div className="flex items-center justify-between">
-          <h2 className="text-sm font-black text-sky-900">🎟️ Playtime</h2>
-          <span className="rounded-full bg-amber-100 px-2.5 py-0.5 text-xs font-black text-amber-700">
-            {tickets.available} ticket{tickets.available !== 1 ? "s" : ""}
+          <h2 className="text-sm font-black text-sky-900">🃏 Crew Memory</h2>
+          <span className="rounded-full bg-amber-50 px-2.5 py-1 text-xs font-black text-amber-700">
+            🎟️ {tickets.available}
           </span>
         </div>
         <p className="mt-1 text-[11px] font-semibold text-stone-400">
-          Earn tickets by finishing tasks on time (max 2/day) and perfect days. A game of blocks
-          with a crewmate pays bond and furniture — never XP.
+          One rule: <b>a completed day = 1 ticket.</b> One ticket = one game. Every finish wins
+          furniture; a perfect round wins the rare stuff. Never XP — life pays XP, games pay homes.
         </p>
         {picking ? (
           <div className="mt-2">
-            <p className="text-[10px] font-black text-stone-400">WHO'S PLAYING WITH YOU?</p>
+            <p className="text-[10px] font-black text-stone-400">WHO PLAYS WITH YOU?</p>
             <div className="mt-1 flex flex-wrap gap-2">
-              {aboard
-                .filter((m) => !m.gone)
-                .map((m) => (
-                  <button
-                    key={m.id}
-                    onClick={() => {
-                      if (puzzle.start()) {
-                        setPlaying(m.id);
-                        setPicking(false);
-                      }
-                    }}
-                    className="rounded-full bg-stone-50 px-3 py-1.5 text-xs font-black text-stone-600 hover:bg-amber-100"
-                  >
-                    {m.name}
-                  </button>
-                ))}
-              <button onClick={() => setPicking(false)} className="text-xs font-bold text-stone-300">
-                cancel
-              </button>
+              {visible.map((m) => (
+                <button
+                  key={m.id}
+                  onClick={() => {
+                    if (memory.start()) {
+                      setPlaying(m.id);
+                      setPicking(false);
+                    }
+                  }}
+                  className="rounded-2xl bg-stone-50 p-1 hover:bg-amber-50"
+                  title={m.name}
+                >
+                  <Chibi char={m.id} mood="happy" size={48} />
+                </button>
+              ))}
             </div>
           </div>
         ) : (
@@ -255,130 +289,121 @@ export function Crew() {
             onClick={() => setPicking(true)}
             className="mt-2 w-full rounded-full bg-sky-900 py-2.5 text-sm font-black text-white transition enabled:hover:bg-sky-800 disabled:opacity-40"
           >
-            {tickets.available < 1 ? "No tickets — earn one out there ⚓" : "Play a round (1 🎟️)"}
+            {tickets.available < 1 ? "Complete a day to earn a ticket" : "Play a round (1 🎟️)"}
           </button>
         )}
       </div>
 
-      {/* The village */}
+      {/* Homes management */}
       <div className="rounded-3xl bg-white p-4 shadow-sm ring-1 ring-sky-100">
-        <h2 className="text-sm font-black text-sky-900">🏘️ The village</h2>
+        <h2 className="text-sm font-black text-sky-900">🏘️ Build & furnish</h2>
         <p className="mt-0.5 text-[11px] font-semibold text-stone-400">
-          Build homes with XP. A home with {COMFY_FURNITURE}+ furnishings holds its owner one extra
-          day before a walkout — their house is a reason to stay.
+          {COMFY_FURNITURE}+ furnishings = a comfy home: +1 day before a walkout, and storms can't touch it.
         </p>
         <div className="mt-3 space-y-2">
-          {aboard
-            .filter((m) => !m.gone)
-            .map((m) => {
-              const home = state.village[m.id];
-              const theme = HOME_THEMES[m.id];
-              return (
-                <div key={m.id} className="rounded-2xl bg-stone-50 p-3">
-                  <div className="flex items-center gap-2">
-                    <span className="text-xl">{home.themed ? theme.emoji : home.built ? "🏠" : "🏕️"}</span>
-                    <div className="flex-1">
-                      <div className="text-xs font-black text-stone-700">
-                        {m.name}
-                        {home.themed && <span className="text-sky-600"> · {theme.title}</span>}
-                        {isComfy(home) && <span className="text-amber-600"> · comfy ✨</span>}
-                      </div>
-                      {home.built ? (
-                        <div className="mt-1 flex flex-wrap gap-1">
-                          {home.furniture.map((f, i) => (
-                            <button
-                              key={`${f}-${i}`}
-                              onClick={() => village.removeFurniture(m.id, i)}
-                              title={`${furnitureById(f)?.title} (tap to put back)`}
-                              className="rounded-lg bg-white px-1.5 py-0.5 text-sm shadow-sm"
-                            >
-                              {furnitureById(f)?.emoji}
-                            </button>
-                          ))}
-                          {home.furniture.length === 0 && (
-                            <span className="text-[10px] font-bold text-stone-300">empty — needs warmth</span>
-                          )}
-                        </div>
-                      ) : (
-                        <span className="text-[10px] font-bold text-stone-400">sleeping under the stars</span>
-                      )}
+          {visible.map((m) => {
+            const home = state.village[m.id];
+            const theme = HOME_THEMES[m.id];
+            return (
+              <div key={m.id} className="rounded-2xl bg-stone-50 p-3">
+                <div className="flex items-center gap-2">
+                  <span className="text-xl">{home.themed ? theme.emoji : home.built ? "🏠" : "🏕️"}</span>
+                  <div className="flex-1">
+                    <div className="text-xs font-black text-stone-700">
+                      {m.name}
+                      {home.themed && <span className="text-sky-600"> · {theme.title}</span>}
+                      {isComfy(home) && <span className="text-amber-600"> · comfy ✨</span>}
+                      {storm?.charId === m.id && <span className="text-rose-500"> · damaged ⚠️</span>}
                     </div>
-                    {!home.built ? (
-                      <button
-                        onClick={() => say(village.buildOrTheme(m.id).message)}
-                        className="rounded-full bg-sky-900 px-3 py-1.5 text-[10px] font-black text-white hover:bg-sky-800"
-                      >
-                        Build 🏠 {HOUSE_COST}
-                      </button>
-                    ) : !home.themed ? (
-                      <button
-                        onClick={() => say(village.buildOrTheme(m.id).message)}
-                        className="rounded-full bg-stone-200 px-3 py-1.5 text-[10px] font-black text-stone-600 hover:bg-amber-100"
-                      >
-                        {theme.emoji} {theme.title} {THEME_COST}
-                      </button>
-                    ) : null}
-                    {placing && home.built && (
-                      <button
-                        onClick={() => {
-                          void village.placeFurniture(m.id, placing).then((r) => {
-                            say(r.message);
-                            if (r.ok) setPlacing(null);
-                          });
-                        }}
-                        className="soft-pulse rounded-full bg-amber-400 px-3 py-1.5 text-[10px] font-black text-sky-950"
-                      >
-                        Place here ✚
-                      </button>
+                    {home.built ? (
+                      <div className="mt-1 flex flex-wrap gap-1">
+                        {home.furniture.map((f, i) => (
+                          <button
+                            key={`${f}-${i}`}
+                            onClick={() => village.removeFurniture(m.id, i)}
+                            title={`${furnitureById(f)?.title} (tap to put back in crate)`}
+                            className="rounded-lg bg-white px-1.5 py-0.5 text-sm shadow-sm"
+                          >
+                            {furnitureById(f)?.emoji}
+                          </button>
+                        ))}
+                        {home.furniture.length === 0 && (
+                          <span className="text-[10px] font-bold text-stone-300">bare walls — storms love those</span>
+                        )}
+                      </div>
+                    ) : (
+                      <span className="text-[10px] font-bold text-stone-400">sleeping in a tent</span>
                     )}
                   </div>
+                  {!home.built ? (
+                    <button
+                      onClick={() => say(village.buildOrTheme(m.id).message)}
+                      className="rounded-full bg-sky-900 px-3 py-1.5 text-[10px] font-black text-white hover:bg-sky-800"
+                    >
+                      Build 🏠 {HOUSE_COST}
+                    </button>
+                  ) : !home.themed ? (
+                    <button
+                      onClick={() => say(village.buildOrTheme(m.id).message)}
+                      className="rounded-full bg-stone-200 px-3 py-1.5 text-[10px] font-black text-stone-600 hover:bg-amber-100"
+                    >
+                      {theme.emoji} {THEME_COST}
+                    </button>
+                  ) : null}
+                  {placing && home.built && (
+                    <button
+                      onClick={() => {
+                        void village.placeFurniture(m.id, placing).then((r) => {
+                          say(r.message);
+                          if (r.ok) setPlacing(null);
+                        });
+                      }}
+                      className="soft-pulse rounded-full bg-amber-400 px-3 py-1.5 text-[10px] font-black text-sky-950"
+                    >
+                      Place ✚
+                    </button>
+                  )}
                 </div>
-              );
-            })}
+              </div>
+            );
+          })}
         </div>
 
-        {/* Inventory + shop */}
-        {(state.furnitureInv.length > 0 || true) && (
-          <div className="mt-3 border-t border-stone-100 pt-3">
-            {state.furnitureInv.length > 0 && (
-              <>
-                <p className="text-[10px] font-black text-stone-400">
-                  YOUR CRATE — tap an item, then “Place here” on a home
-                </p>
-                <div className="mt-1 flex flex-wrap gap-1.5">
-                  {state.furnitureInv.map((f, i) => (
-                    <button
-                      key={`${f}-${i}`}
-                      onClick={() => setPlacing(placing === f ? null : f)}
-                      className={`rounded-xl px-2 py-1 text-lg shadow-sm ${
-                        placing === f ? "bg-amber-300 ring-2 ring-amber-500" : "bg-stone-50"
-                      }`}
-                      title={furnitureById(f)?.title}
-                    >
-                      {furnitureById(f)?.emoji}
-                    </button>
-                  ))}
-                </div>
-              </>
-            )}
-            <p className="mt-2 text-[10px] font-black text-stone-400">FURNITURE SHOP</p>
-            <div className="mt-1 flex flex-wrap gap-1.5">
-              {FURNITURE.filter((f) => f.cost > 0).map((f) => (
-                <button
-                  key={f.id}
-                  onClick={() => say(village.buyFurniture(f.id).message)}
-                  className="rounded-xl bg-stone-50 px-2 py-1 text-[10px] font-bold text-stone-600 hover:bg-amber-50"
-                  title={f.title}
-                >
-                  {f.emoji} {f.cost}
-                </button>
-              ))}
-            </div>
-            <p className="mt-1.5 text-[9px] font-bold text-stone-300">
-              🐠 🔭 🏆 🧰 only come from playtime prizes (coming next).
-            </p>
+        <div className="mt-3 border-t border-stone-100 pt-3">
+          {state.furnitureInv.length > 0 && (
+            <>
+              <p className="text-[10px] font-black text-stone-400">YOUR CRATE — tap an item, then “Place ✚” on a home</p>
+              <div className="mt-1 flex flex-wrap gap-1.5">
+                {state.furnitureInv.map((f, i) => (
+                  <button
+                    key={`${f}-${i}`}
+                    onClick={() => setPlacing(placing === f ? null : f)}
+                    className={`rounded-xl px-2 py-1 text-lg shadow-sm ${placing === f ? "bg-amber-300 ring-2 ring-amber-500" : "bg-stone-50"}`}
+                    title={furnitureById(f)?.title}
+                  >
+                    {furnitureById(f)?.emoji}
+                  </button>
+                ))}
+              </div>
+            </>
+          )}
+          <p className="mt-2 text-[10px] font-black text-stone-400">FURNITURE SHOP</p>
+          <div className="mt-1 flex flex-wrap gap-1.5">
+            {FURNITURE.filter((f) => f.cost > 0).map((f) => (
+              <button
+                key={f.id}
+                onClick={() => say(village.buyFurniture(f.id).message)}
+                className="rounded-xl bg-stone-50 px-2 py-1 text-[10px] font-bold text-stone-600 hover:bg-amber-50"
+                title={f.title}
+              >
+                {f.emoji} {f.cost}
+              </button>
+            ))}
           </div>
-        )}
+          <p className="mt-1.5 text-[9px] font-bold text-stone-300">
+            🐠 🐚 🌼 🔭 🏆 🧰 come from Crew Memory and island chests.
+          </p>
+        </div>
       </div>
 
       {/* Locked */}
@@ -398,9 +423,9 @@ export function Crew() {
       </div>
 
       {playing && (
-        <PuzzleGame
+        <MemoryGame
           companion={playing}
-          onFinish={(score) => puzzle.finish(playing, score)}
+          onFinish={(perfect) => memory.finish(playing, perfect)}
           onQuit={() => setPlaying(null)}
         />
       )}

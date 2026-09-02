@@ -57,6 +57,8 @@ export function More() {
         </button>
       </div>
 
+      <BookCard />
+
       <SkillDeckCard />
 
       <SeasonToggle />
@@ -81,6 +83,63 @@ export function More() {
           Sign out (both apps)
         </button>
       )}
+    </div>
+  );
+}
+
+function BookCard() {
+  const { session } = useAuth();
+  const settingsQ = useSettings();
+  const save = useSaveSettingsData();
+  const data = (settingsQ.data?.data ?? {}) as Record<string, unknown> & {
+    book?: { title?: string; chapters?: number };
+  };
+  const [title, setTitle] = useState("");
+  const [loaded, setLoaded] = useState(false);
+  const chapters = data.book?.chapters ?? 2;
+
+  useEffect(() => {
+    if (settingsQ.isSuccess && !loaded) {
+      setTitle(data.book?.title ?? "9-5 Is Not a Scam");
+      setLoaded(true);
+    }
+  }, [settingsQ.isSuccess, loaded, data.book?.title]);
+
+  return (
+    <div className="rounded-3xl bg-white p-4 shadow-sm ring-1 ring-sky-100">
+      <h2 className="text-sm font-black text-sky-900">📗 Current book</h2>
+      <p className="mt-1 text-xs font-semibold text-stone-400">
+        Finished one? Set the next — the daily anchor follows along. Robin approves of sequels.
+      </p>
+      <input
+        value={title}
+        onChange={(e) => setTitle(e.target.value)}
+        disabled={!session}
+        placeholder="Book title"
+        className="mt-2 w-full rounded-2xl bg-stone-50 px-4 py-2.5 text-sm font-semibold focus:outline-none focus:ring-2 focus:ring-sky-400"
+      />
+      <div className="mt-2 flex items-center gap-2">
+        <span className="text-xs font-bold text-stone-500">Chapters per day:</span>
+        {[1, 2].map((n) => (
+          <button
+            key={n}
+            disabled={!session || save.isPending}
+            onClick={() => save.mutate({ ...data, book: { title: title.trim(), chapters: n } })}
+            className={`rounded-full px-4 py-1.5 text-xs font-black ${
+              chapters === n ? "bg-sky-900 text-white" : "bg-stone-100 text-stone-500"
+            }`}
+          >
+            {n}
+          </button>
+        ))}
+        <button
+          disabled={!session || save.isPending || !title.trim()}
+          onClick={() => save.mutate({ ...data, book: { title: title.trim(), chapters } })}
+          className="ml-auto rounded-full bg-amber-400 px-4 py-1.5 text-xs font-black text-sky-950 transition enabled:hover:bg-amber-300 disabled:opacity-40"
+        >
+          {save.isPending ? "Saving…" : save.isSuccess ? "Saved 📗" : "Save"}
+        </button>
+      </div>
     </div>
   );
 }

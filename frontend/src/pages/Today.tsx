@@ -18,14 +18,23 @@ import {
   useMoneyTreeVideoCount,
   useRainWatch,
   useSeason,
+  useSettings,
 } from "../lib/queries";
 import { useGrowth } from "../lib/stats";
 import { useAuth } from "../lib/auth";
 import { supabaseConfigured } from "../lib/supabase";
 import { QuietTimeGate, quietStartedAt } from "../components/QuietTimeGate";
 import { CeremonyGate } from "../components/CeremonyGate";
-import { useAdvanceSkill, useClaimRequest, useCrew, useGrace } from "../lib/crewQueries";
-import { CHAR_META, SKILL_DECK } from "../lib/crew";
+import {
+  announceBond,
+  useAdvanceSkill,
+  useAnswerDilemma,
+  useApprovePlan,
+  useClaimRequest,
+  useCrew,
+  useGrace,
+} from "../lib/crewQueries";
+import { areasOfSlug, CHAR_AREA, CHAR_META, SKILL_DECK } from "../lib/crew";
 import { Chibi } from "../components/chibi/Chibi";
 import { useCompleteTask, useDayPlan, useOpenTasks, type DsTask } from "../lib/tasksQueries";
 import type { PlanSlot } from "../lib/planner";
@@ -82,8 +91,17 @@ export function Today() {
   const isSunday = weekdayOf(day) === 0;
   const nowMin = wallMinutes();
 
+  const settingsQ = useSettings();
+  const bookOverride = (settingsQ.data?.data as { book?: { title?: string; chapters?: number } } | undefined)?.book;
+
   const items = useMemo<TimelineItem[]>(() => {
-    const anchors = anchorsForDay(day, season);
+    const anchors = anchorsForDay(day, season).map((a) => {
+      if (a.slug === "book" && bookOverride?.title) {
+        const ch = bookOverride.chapters ?? 2;
+        return { ...a, title: `“${bookOverride.title}” — ${ch} chapter${ch > 1 ? "s" : ""}` };
+      }
+      return a;
+    });
     const church = churchForDay(day);
     const rows: TimelineItem[] = [];
     for (const e of church) {
@@ -126,17 +144,31 @@ export function Today() {
       });
     }
     return rows.sort((x, y) => daySortKey(x.startMin) - daySortKey(y.startMin));
-  }, [day, season]);
+  }, [day, season, bookOverride?.title, bookOverride?.chapters]);
 
   const logQ = useAnchorLog(day);
   const log = logQ.data ?? {};
   const checkAnchor = useCheckAnchor(day);
   const checkChurch = useCheckChurch(day);
   const growth = useGrowth();
-  const { aboard, state: crewState } = useCrew();
+  const { aboard, state: crewState, scene, dilemmaDef } = useCrew();
   const { left: graceLeft, grace } = useGrace();
   const advanceSkill = useAdvanceSkill();
   const claimRequest = useClaimRequest();
+  const answerDilemma = useAnswerDilemma();
+  const approvePlan = useApprovePlan();
+  const [adjusting, setAdjusting] = useState(false);
+  const [draft, setDraft] = useState<Record<string, unknown> & { slots: PlanSlot[] } | null>(null);
+
+  /** Cause and effect, visible: a check feeds its area's owner (+2 bond). */
+  const bondFor = (slug: string) => {
+    const areas = areasOfSlug(slug);
+    for (const m of aboard) {
+      if (m.gone) continue;
+      const a = CHAR_AREA[m.id];
+      if (a && a !== "overall" && areas.includes(a)) announceBond(m.name, 2);
+    }
+  };
 
   // Task/skill slots from the plan approved at last night's ceremony.
   const planQ = useDayPlan(day);
@@ -279,6 +311,64 @@ export function Today() {
         </div>
       )}
 
+      {/* This morning on deck — the crew reacts to your real yesterday */}
+      {session && scene.length > 0 && (
+        <div className="rounded-3xl bg-white p-4 shadow-sm ring-1 ring-sky-100">
+          <p className="text-[10px] font-black uppercase tracking-widest text-sky-500">
+            🌅 This morning on deck
+          </p>
+          <div className="mt-2 space-y-2">
+            {scene.map((l, i) => (
+              <div key={i} className="flex items-start gap-2">
+                <Chibi char={l.charId} mood="neutral" size={38} />
+                <div className="flex-1 rounded-2xl rounded-tl-none bg-sky-50 px-3 py-1.5">
+                  <span className="text-[10px] font-black text-sky-700">{CHAR_META[l.charId].name}</span>
+                  <p className="text-xs font-semibold text-stone-700">{l.text}</p>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Today's dilemma — your call, captain */}
+      {session && dilemmaDef && crewState?.dilemma?.day === day && (
+        <div className="rounded-3xl bg-white p-4 shadow-sm ring-2 ring-amber-200">
+          <p className="text-[10px] font-black uppercase tracking-widest text-amber-600">
+            🎭 Today's dilemma
+          </p>
+          {crewState.dilemma.choice === null ? (
+            <>
+              <p className="mt-1 text-sm font-bold text-stone-700">{dilemmaDef.text}</p>
+              <div className="mt-2 grid grid-cols-1 gap-1.5 sm:grid-cols-2">
+                <button
+                  onClick={() => {
+                    setFlash(answerDilemma(dilemmaDef, "a"));
+                    window.setTimeout(() => setFlash(null), 4500);
+                  }}
+                  className="rounded-2xl bg-sky-900 px-3 py-2 text-xs font-black text-white hover:bg-sky-800"
+                >
+                  {dilemmaDef.a.label}
+                </button>
+                <button
+                  onClick={() => {
+                    setFlash(answerDilemma(dilemmaDef, "b"));
+                    window.setTimeout(() => setFlash(null), 4500);
+                  }}
+                  className="rounded-2xl bg-amber-400 px-3 py-2 text-xs font-black text-sky-950 hover:bg-amber-300"
+                >
+                  {dilemmaDef.b.label}
+                </button>
+              </div>
+            </>
+          ) : (
+            <p className="mt-1 text-xs font-semibold text-stone-500">
+              {dilemmaDef[crewState.dilemma.choice].result}
+            </p>
+          )}
+        </div>
+      )}
+
       {session && aboard.length > 0 && (
         <Link
           to="/crew"
@@ -291,6 +381,18 @@ export function Today() {
           ))}
           <span className="text-[10px] font-black text-sky-600">→ crew</span>
         </Link>
+      )}
+
+      {session && !!planQ.data?.plan && (
+        <button
+          onClick={() => {
+            setDraft(JSON.parse(JSON.stringify(planQ.data!.plan)) as typeof draft);
+            setAdjusting(true);
+          }}
+          className="w-full rounded-3xl bg-white px-4 py-2 text-xs font-black text-sky-700 shadow-sm ring-1 ring-sky-100 hover:bg-sky-50"
+        >
+          🗺️ Adjust today's plan — life moved, the map can too
+        </button>
       )}
 
       {!session && (
@@ -477,7 +579,10 @@ export function Today() {
                   <button
                     disabled={!session || checkAnchor.isPending}
                     onClick={() =>
-                      checkAnchor.mutate({ def: SKILL_BLOCK_DEF }, { onSuccess: () => advanceSkill() })
+                      checkAnchor.mutate(
+                        { def: SKILL_BLOCK_DEF },
+                        { onSuccess: () => { advanceSkill(); bondFor("skill_block"); } }
+                      )
                     }
                     className="rounded-full bg-amber-400 px-3 py-1.5 text-xs font-black text-sky-950 transition enabled:hover:bg-amber-300 disabled:opacity-30"
                   >
@@ -504,9 +609,10 @@ export function Today() {
                     disabled={!session || checkAnchor.isPending || checkChurch.isPending}
                     onClick={() => {
                       if (item.kind === "church" && item.church) {
-                        checkChurch.mutate({ event: item.church });
+                        checkChurch.mutate({ event: item.church }, { onSuccess: () => bondFor(item.key) });
                       } else if (item.anchor) {
-                        checkAnchor.mutate({ def: item.anchor });
+                        const slug = item.anchor.slug;
+                        checkAnchor.mutate({ def: item.anchor }, { onSuccess: () => bondFor(slug) });
                       }
                     }}
                     className="rounded-full bg-amber-400 px-3 py-1.5 text-xs font-black text-sky-950 transition enabled:hover:bg-amber-300 disabled:opacity-30"
@@ -534,6 +640,108 @@ export function Today() {
           );
         })}
       </div>
+
+      {adjusting && draft && (
+        <div className="fixed inset-0 z-50 flex items-end justify-center bg-sky-950/80 p-4 sm:items-center">
+          <div className="max-h-[85vh] w-full max-w-md overflow-y-auto rounded-3xl bg-white p-5 shadow-xl">
+            <h2 className="text-sm font-black text-sky-900">🗺️ Adjust today</h2>
+            <p className="mt-0.5 text-[11px] font-semibold text-stone-400">
+              Shift or drop the flexible pieces. Fixed anchors stay anchored.
+            </p>
+            <div className="mt-3 space-y-1.5">
+              {draft.slots
+                .slice()
+                .sort((a, b) => daySortKey(a.startMin) - daySortKey(b.startMin))
+                .map((s) => (
+                  <div key={s.refId} className="flex items-center gap-2 rounded-2xl bg-stone-50 px-3 py-1.5">
+                    <span className="w-20 shrink-0 text-[10px] font-black text-stone-500">
+                      {fmtMin(s.startMin)}–{fmtMin(s.endMin)}
+                    </span>
+                    <span className="flex-1 truncate text-xs font-bold text-stone-700">
+                      {s.emoji} {s.title}
+                    </span>
+                    {s.kind === "task" || s.kind === "skill" ? (
+                      <span className="flex shrink-0 gap-1">
+                        <button
+                          onClick={() =>
+                            setDraft((d) =>
+                              d
+                                ? {
+                                    ...d,
+                                    slots: d.slots.map((x) =>
+                                      x.refId === s.refId
+                                        ? { ...x, startMin: Math.max(0, x.startMin - 15), endMin: Math.max(15, x.endMin - 15) }
+                                        : x
+                                    ),
+                                  }
+                                : d
+                            )
+                          }
+                          className="rounded-full bg-white px-1.5 text-[10px] font-black text-stone-500 shadow-sm"
+                        >
+                          ◂
+                        </button>
+                        <button
+                          onClick={() =>
+                            setDraft((d) =>
+                              d
+                                ? {
+                                    ...d,
+                                    slots: d.slots.map((x) =>
+                                      x.refId === s.refId
+                                        ? { ...x, startMin: Math.min(1424, x.startMin + 15), endMin: Math.min(1439, x.endMin + 15) }
+                                        : x
+                                    ),
+                                  }
+                                : d
+                            )
+                          }
+                          className="rounded-full bg-white px-1.5 text-[10px] font-black text-stone-500 shadow-sm"
+                        >
+                          ▸
+                        </button>
+                        <button
+                          onClick={() =>
+                            setDraft((d) => (d ? { ...d, slots: d.slots.filter((x) => x.refId !== s.refId) } : d))
+                          }
+                          className="rounded-full bg-white px-1.5 text-[10px] font-black text-rose-400 shadow-sm"
+                        >
+                          ✕
+                        </button>
+                      </span>
+                    ) : (
+                      <span className="text-[9px] font-black text-stone-300">FIXED</span>
+                    )}
+                  </div>
+                ))}
+            </div>
+            <button
+              disabled={approvePlan.isPending}
+              onClick={() =>
+                approvePlan.mutate(
+                  { day, plan: draft },
+                  {
+                    onSuccess: () => {
+                      setAdjusting(false);
+                      setFlash("🗺️ Plan updated — Nami redrew the map.");
+                      window.setTimeout(() => setFlash(null), 3500);
+                    },
+                  }
+                )
+              }
+              className="mt-4 w-full rounded-full bg-sky-900 py-2.5 text-sm font-black text-white transition enabled:hover:bg-sky-800 disabled:opacity-40"
+            >
+              Save the new course ⚓
+            </button>
+            <button
+              onClick={() => setAdjusting(false)}
+              className="mt-2 w-full text-center text-xs font-bold text-stone-400"
+            >
+              Never mind
+            </button>
+          </div>
+        </div>
+      )}
 
       {graceFor && (
         <div className="fixed inset-0 z-50 flex items-end justify-center bg-sky-950/80 p-4 sm:items-center">
@@ -591,7 +799,10 @@ export function Today() {
         <QuietTimeGate
           onComplete={(elapsedSeconds) => {
             setQuietOpen(false);
-            checkAnchor.mutate({ def: quietAnchor, meta: { quietSeconds: elapsedSeconds } });
+            checkAnchor.mutate(
+              { def: quietAnchor, meta: { quietSeconds: elapsedSeconds } },
+              { onSuccess: () => bondFor("quiet_time") }
+            );
           }}
           onCancel={() => setQuietOpen(false)}
         />
@@ -604,7 +815,8 @@ export function Today() {
           streak={growth.streak.current}
           onSealed={() => {
             const confession = items.find((i) => i.anchor?.kind === "ceremony")?.anchor;
-            if (confession) checkAnchor.mutate({ def: confession });
+            if (confession)
+              checkAnchor.mutate({ def: confession }, { onSuccess: () => bondFor("confession") });
           }}
           onClose={() => setCeremonyOpen(false)}
         />

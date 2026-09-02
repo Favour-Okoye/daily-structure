@@ -2,7 +2,25 @@ import { useEffect, useRef } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "./supabase";
 import { useAuth } from "./auth";
-import { appDay, isoWeekKey, shiftDay } from "./day";
+import { appDay, isoWeekKey, mondayOfWeekKey, shiftDay, weekdayOf } from "./day";
+import { requiredSlugs } from "./anchors";
+import {
+  AREA_VERB,
+  DILEMMAS,
+  dilemmaForDay,
+  EXAMS,
+  examArea,
+  islandAt,
+  landfallTier,
+  sceneForDay,
+  stormTarget,
+  STORM_REPAIR_COST,
+  TIER_LINES,
+  areaMoodDetail,
+  type DilemmaDef,
+  type SceneLine,
+  type YesterdayFacts,
+} from "./crew";
 import {
   ALL_CHARS,
   bondOf,
@@ -28,7 +46,6 @@ import {
   furnitureById,
   requestForDay,
   walkoutThresholds,
-  areaMood,
   type CharId,
   type CrewState,
   type LogRow,
@@ -55,6 +72,52 @@ export function useAnchorRange(span = 14) {
       return (data ?? []) as LogRow[];
     },
   });
+}
+
+/** Days on which the day-complete bonus fired (tickets + perfect-day facts). */
+export function useDayCompletes() {
+  const { session } = useAuth();
+  return useQuery({
+    queryKey: ["ds_day_completes", session?.user.id],
+    enabled: !!supabase && !!session,
+    staleTime: 60_000,
+    queryFn: async (): Promise<string[]> => {
+      const { data, error } = await supabase!
+        .from("ds_xp_events")
+        .select("happened_on")
+        .eq("action", "day_complete");
+      if (error) throw error;
+      return ((data ?? []) as { happened_on: string }[]).map((r) => r.happened_on);
+    },
+  });
+}
+
+/** Distinct days with completed tasks since a given day (level contracts). */
+export function useTaskDaysSince(since: string | null) {
+  const { session } = useAuth();
+  return useQuery({
+    queryKey: ["ds_task_days", session?.user.id, since],
+    enabled: !!supabase && !!session && !!since,
+    queryFn: async (): Promise<{ day: string; kind: string }[]> => {
+      const { data, error } = await supabase!
+        .from("ds_tasks")
+        .select("completed_on, kind")
+        .eq("status", "done")
+        .gte("completed_on", since!);
+      if (error) throw error;
+      return ((data ?? []) as { completed_on: string; kind: string }[]).map((r) => ({
+        day: r.completed_on,
+        kind: r.kind,
+      }));
+    },
+  });
+}
+
+/** Tell the UI a bond changed (BondToast listens). */
+export function announceBond(name: string, delta: number) {
+  if (typeof window !== "undefined") {
+    window.dispatchEvent(new CustomEvent("ds:bond", { detail: { name, delta } }));
+  }
 }
 
 /** Lifetime completion counts that gate recruits. */
@@ -138,6 +201,7 @@ export interface CrewMember {
   role: string;
   mood: Mood;
   moodEmoji: string;
+  moodWhy: string;
   bond: number;
   rawBond: number;
   tier: string;
@@ -165,10 +229,12 @@ export function useCrew() {
   const tasksQ = useOpenTasks();
   const countsQ = useLifetimeCounts();
   const xpDaysQ = useXpDays();
+  const dayCompletesQ = useDayCompletes();
   const save = useSaveCrew();
   const SEASON = useSeason();
   const maintained = useRef<string | null>(null);
   const today = appDay();
+  const taskDaysQ = useTaskDaysSince(stateQ.data?.state?.exam?.startedOn ?? null);
 
   const loading = stateQ.isLoading || rowsQ.isLoading;
   const state = stateQ.data?.state ?? null;
@@ -191,17 +257,30 @@ export function useCrew() {
           : c.bondBonus;
       const bond = Math.max(0, Math.min(100, rawBond));
       let mood: Mood = "neutral";
+      let moodWhy = "steady as she goes";
       if (c.recruited) {
-        if (c.gone) mood = "gone";
-        else if (area) {
-          mood = areaMood(area, today, state.startedOn, SEASON, areaDays);
+        if (c.gone) {
+          mood = "gone";
+          moodWhy = `walked out on ${c.goneSince} — go after them`;
+        } else if (area) {
+          const detail = areaMoodDetail(area, today, state.startedOn, SEASON, areaDays);
+          mood = detail.mood;
+          moodWhy =
+            detail.of < 2
+              ? "fresh aboard — the honeymoon"
+              : `${AREA_VERB[area]} ${detail.done} of the last ${detail.of} days${detail.doneToday ? " (+today!)" : ""}`;
           const run = neglectRunOf(area, today, state.startedOn, SEASON, areaDays);
-          if (run >= walkoutThresholds(state.village[id]).packing) mood = "packing";
+          if (run >= walkoutThresholds(state.village[id]).packing) {
+            mood = "packing";
+            moodWhy = `${run} neglected days — one real day in their area keeps them`;
+          }
           if (id === "nami" && overdue >= 1 && mood !== "packing") {
             mood = capMood(mood, overdue >= 3 ? "sad" : "worried");
+            moodWhy = `${overdue} overdue task${overdue > 1 ? "s" : ""} on the map`;
           }
         } else if (id === "naruto") {
           mood = streak.current >= 3 ? "happy" : streak.current >= 1 ? "neutral" : "worried";
+          moodWhy = `the streak is ${streak.current} day${streak.current === 1 ? "" : "s"}`;
         }
       }
       const line =
@@ -216,6 +295,7 @@ export function useCrew() {
         role: CHAR_META[id].role,
         mood,
         moodEmoji: MOOD_EMOJI[mood],
+        moodWhy,
         bond,
         rawBond,
         tier: bondTier(bond),
@@ -229,10 +309,93 @@ export function useCrew() {
     });
   }
 
+  const aboardIds = crew.filter((c) => c.recruited && !c.gone).map((c) => c.id);
+
+  // ---- Yesterday's facts → this morning's deck scene ----
+  const yesterday = shiftDay(today, -1);
+  const yRows = rows.filter((r) => r.day === yesterday);
+  const yDone = new Set(yRows.filter((r) => r.status === "done").map((r) => r.anchor_slug));
+  const yExcused = new Set(yRows.filter((r) => r.status === "grace").map((r) => r.anchor_slug));
+  const facts: YesterdayFacts = {
+    day: yesterday,
+    perfect: (dayCompletesQ.data ?? []).includes(yesterday),
+    doneSlugs: yDone,
+    missedRequired: requiredSlugs(yesterday, SEASON).filter(
+      (s) => !yDone.has(s) && !yExcused.has(s)
+    ),
+    tasksDone: 0, // enriched below when task data is loaded
+    graceUsed: yExcused.size > 0,
+    streak: streak.current,
+    overdueNow: overdue,
+    isSundayToday: weekdayOf(today) === 0,
+  };
+  const scene: SceneLine[] =
+    state && rowsQ.isSuccess && dayCompletesQ.isSuccess ? sceneForDay(today, aboardIds, facts) : [];
+
+  // ---- Level contract progress ----
+  let examInfo: {
+    charId: CharId;
+    targetLevel: number;
+    needed: number;
+    have: number;
+    desc: string;
+  } | null = null;
+  if (state?.exam) {
+    const ex = state.exam;
+    const def = EXAMS[ex.charId];
+    let have = 0;
+    if (def.metric === "streak_add") {
+      have = Math.max(0, streak.current - ex.startStreak);
+    } else if (def.metric === "perfect_day") {
+      have = (dayCompletesQ.data ?? []).filter((d) => d >= ex.startedOn).length;
+    } else if (def.metric === "quiet_day") {
+      have = new Set(
+        rows.filter((r) => r.status === "done" && r.anchor_slug === "quiet_time" && r.day >= ex.startedOn).map((r) => r.day)
+      ).size;
+    } else if (def.metric === "task_day") {
+      const rowsT = taskDaysQ.data ?? [];
+      const relevant =
+        ex.charId === "sanji"
+          ? rowsT.filter((t) => ["job_application", "job_followup", "bi_practice"].includes(t.kind))
+          : rowsT;
+      have = new Set(relevant.map((t) => t.day)).size;
+    } else {
+      const area = examArea(ex.charId);
+      let cursor = ex.startedOn;
+      while (cursor <= today) {
+        const entry = areaDays.get(cursor);
+        const done =
+          area === "overall" ? (entry?.done.size ?? 0) > 0 : (entry?.done.has(area) ?? false);
+        if (done) have++;
+        cursor = shiftDay(cursor, 1);
+      }
+    }
+    examInfo = {
+      charId: ex.charId,
+      targetLevel: ex.targetLevel,
+      needed: ex.needed,
+      have: Math.min(have, ex.needed),
+      desc: def.text(ex.needed),
+    };
+  }
+
+  // ---- Today's dilemma, resolved to its definition ----
+  const dilemmaDef: DilemmaDef | null =
+    state?.dilemma && state.dilemma.day === today
+      ? (DILEMMAS.find((d) => d.id === state.dilemma!.id) ?? null)
+      : null;
+
   // ---- Maintenance pass: once per (day, data snapshot) ----
   const ready =
-    !!session && stateQ.isSuccess && rowsQ.isSuccess && countsQ.isSuccess && xpDaysQ.isSuccess;
-  const snapshotKey = ready ? `${today}:${rows.length}:${(xpDaysQ.data ?? []).length}` : null;
+    !!session &&
+    stateQ.isSuccess &&
+    rowsQ.isSuccess &&
+    countsQ.isSuccess &&
+    xpDaysQ.isSuccess &&
+    dayCompletesQ.isSuccess;
+  const snapshotKey = ready
+    ? `${today}:${rows.length}:${(xpDaysQ.data ?? []).length}:${(dayCompletesQ.data ?? []).length}:${(taskDaysQ.data ?? []).length}`
+    : null;
 
   useEffect(() => {
     if (!ready || !state || !snapshotKey || maintained.current === snapshotKey || save.isPending) return;
@@ -272,11 +435,57 @@ export function useCrew() {
       }
     }
 
-    // 2b. Today's character request (deterministic; ~55% of days).
+    // 2b. Today's character request (odd days) or dilemma (even days) — deterministic.
+    const recruitedIds = ALL_CHARS.filter(
+      (id) => next.characters[id].recruited && !next.characters[id].gone
+    );
     if (next.request?.day !== today) {
-      const recruitedIds = ALL_CHARS.filter((id) => next.characters[id].recruited && !next.characters[id].gone);
       next.request = requestForDay(today, recruitedIds);
       changed = true;
+    }
+    if (next.dilemma?.day !== today) {
+      const d = dilemmaForDay(today, recruitedIds);
+      next.dilemma = d ? { day: today, id: d.id, choice: null } : null;
+      changed = true;
+    }
+
+    // 2c. Storms: a bare built house may take damage (furnished homes shrug it off).
+    const target = stormTarget(today, next);
+    if (target) {
+      next.storm = { day: today, charId: target };
+      logIt(`⛈️ A storm damaged ${CHAR_META[target].name}'s home! Repair it (${STORM_REPAIR_COST} XP) — furnished homes would have held.`);
+      changed = true;
+    }
+
+    // 2d. Level contract passed? (day-level facts only — never check-times)
+    if (next.exam && examInfo && examInfo.have >= examInfo.needed) {
+      const ch = next.characters[next.exam.charId];
+      ch.level = next.exam.targetLevel;
+      next.pendingLevelUp = next.exam.charId;
+      logIt(`⚡ ${CHAR_META[next.exam.charId].name} passed their trial — ${FORM_NAMES[next.exam.charId][next.exam.targetLevel - 1]} unlocked!`);
+      next.exam = null;
+      changed = true;
+    }
+
+    // 2e. Landfall becomes due: Sundays land this week; later days land a missed week.
+    {
+      const wd = weekdayOf(today);
+      const candidate = wd === 0 ? isoWeekKey(today) : isoWeekKey(shiftDay(mondayOfWeekKey(isoWeekKey(today)), -1));
+      if (
+        next.voyage.lastLandfallWeek !== candidate &&
+        next.voyage.pendingLandfall?.weekKey !== candidate
+      ) {
+        const monday = mondayOfWeekKey(candidate);
+        const sunday = shiftDay(monday, 6);
+        const weekXp = (xpDaysQ.data ?? [])
+          .filter((d) => d.happened_on >= monday && d.happened_on <= sunday)
+          .reduce((s, d) => s + d.points, 0);
+        // never celebrate a week from before the voyage began
+        if (weekXp > 0 || next.voyage.lastLandfallWeek !== null) {
+          next.voyage.pendingLandfall = { weekKey: candidate, weekXp, tier: landfallTier(weekXp) };
+          changed = true;
+        }
+      }
     }
 
     // 3. Recruits (one per pass, so each gets their moment).
@@ -319,6 +528,11 @@ export function useCrew() {
     totalXp,
     streak,
     overdue,
+    scene,
+    dilemmaDef,
+    examInfo,
+    voyage: state?.voyage ?? null,
+    storm: state?.storm ?? null,
   };
 }
 
@@ -412,29 +626,134 @@ export function useCompleteQuestDay() {
   };
 }
 
-export function useBuyLevel() {
+/** Start a level contract: XP pays the tuition, life passes the exam. */
+export function useStartExam() {
   const { data } = useCrewState();
   const save = useSaveCrew();
-  const { wallet } = useCrew();
+  const { wallet, streak } = useCrew();
+  const today = appDay();
   return (charId: CharId, bond: number): { ok: boolean; message: string } => {
     const state = data?.state;
     if (!state) return { ok: false, message: "Not loaded." };
+    if (state.exam) return { ok: false, message: `Finish ${CHAR_META[state.exam.charId].name}'s trial first — one contract at a time.` };
     const c = state.characters[charId];
     const target = c.level + 1;
     if (target > maxLevel(charId)) return { ok: false, message: "Already at their final form." };
     const cost = LEVEL_COST[target] ?? Infinity;
     const gate = LEVEL_BOND_GATE[target] ?? 100;
     if (bond < gate) return { ok: false, message: `Bond too low — reach ${gate} first. Show up for them.` };
-    if (wallet < cost) return { ok: false, message: `Not enough XP — need ${cost}, you have ${wallet}.` };
+    if (wallet < cost) return { ok: false, message: `Tuition is ${cost} XP — you have ${wallet}.` };
+    const def = EXAMS[charId];
+    const needed = def.needed[target - 2] ?? def.needed[def.needed.length - 1];
     const next: CrewState = JSON.parse(JSON.stringify(state)) as CrewState;
     next.spentXp += cost;
-    next.characters[charId].level = target;
+    next.exam = { charId, targetLevel: target, startedOn: today, needed, startStreak: streak.current };
     next.log = [
-      { day: appDay(), text: `${CHAR_META[charId].name} unlocked ${FORM_NAMES[charId][target - 1]}! ⚡` },
+      { day: today, text: `📜 ${CHAR_META[charId].name}'s trial begun: ${def.text(needed)}` },
       ...next.log,
     ].slice(0, 60);
     save.mutate(next);
-    return { ok: true, message: `${FORM_NAMES[charId][target - 1]} unlocked!` };
+    return { ok: true, message: `Trial begun! ${def.text(needed)} (Days count — clock times never do.)` };
+  };
+}
+
+/** Walk away from a contract — full tuition refund, no hard feelings. */
+export function useCancelExam() {
+  const { data } = useCrewState();
+  const save = useSaveCrew();
+  return (): void => {
+    const state = data?.state;
+    if (!state?.exam) return;
+    const next: CrewState = JSON.parse(JSON.stringify(state)) as CrewState;
+    next.spentXp = Math.max(0, next.spentXp - (LEVEL_COST[state.exam.targetLevel] ?? 0));
+    next.log = [
+      { day: appDay(), text: `${CHAR_META[state.exam.charId].name}'s trial set aside — tuition returned.` },
+      ...next.log,
+    ].slice(0, 60);
+    next.exam = null;
+    save.mutate(next);
+  };
+}
+
+/** Answer today's dilemma — bonds and trinkets, never XP. */
+export function useAnswerDilemma() {
+  const { data } = useCrewState();
+  const save = useSaveCrew();
+  const today = appDay();
+  return (def: DilemmaDef, choice: "a" | "b"): string => {
+    const state = data?.state;
+    if (!state?.dilemma || state.dilemma.day !== today || state.dilemma.choice) {
+      return "Already settled.";
+    }
+    const opt = def[choice];
+    const next: CrewState = JSON.parse(JSON.stringify(state)) as CrewState;
+    next.dilemma = { ...state.dilemma, choice };
+    for (const [id, delta] of Object.entries(opt.bond ?? {})) {
+      next.characters[id as CharId].bondBonus += delta ?? 0;
+      announceBond(CHAR_META[id as CharId].name, delta ?? 0);
+    }
+    if (opt.furniture) next.furnitureInv.push(opt.furniture);
+    next.log = [{ day: today, text: `🎭 ${opt.result}` }, ...next.log].slice(0, 60);
+    save.mutate(next);
+    return opt.result;
+  };
+}
+
+/** Make landfall: reveal the island, feast, open the chest. */
+export function useLandfall() {
+  const { data } = useCrewState();
+  const save = useSaveCrew();
+  const today = appDay();
+  return (): { name: string; emoji: string; blurb: string; hue: number; tier: number; drops: string[] } | null => {
+    const state = data?.state;
+    const pending = state?.voyage.pendingLandfall;
+    if (!state || !pending) return null;
+    const island = islandAt(state.voyage.islandIndex);
+    const drops: string[] = [];
+    if (pending.tier >= 2) drops.push(DROP_COMMON[seededHashLocal(pending.weekKey + ":c1") % DROP_COMMON.length]);
+    if (pending.tier >= 3) drops.push(DROP_COMMON[seededHashLocal(pending.weekKey + ":c2") % DROP_COMMON.length]);
+    if (pending.tier >= 4) drops.push(DROP_RARE[seededHashLocal(pending.weekKey + ":r") % DROP_RARE.length]);
+    const next: CrewState = JSON.parse(JSON.stringify(state)) as CrewState;
+    next.voyage.islandIndex += 1;
+    next.voyage.lastLandfallWeek = pending.weekKey;
+    next.voyage.pendingLandfall = null;
+    next.furnitureInv.push(...drops);
+    next.log = [
+      { day: today, text: `${island.emoji} Landfall at ${island.name}! ${TIER_LINES[pending.tier]}` },
+      ...next.log,
+    ].slice(0, 60);
+    save.mutate(next);
+    return { name: island.name, emoji: island.emoji, blurb: island.blurb, hue: island.hue, tier: pending.tier, drops };
+  };
+}
+
+function seededHashLocal(s: string): number {
+  let h = 2166136261;
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return Math.abs(h);
+}
+
+/** Repair a storm-damaged home. */
+export function useRepairStorm() {
+  const { data } = useCrewState();
+  const save = useSaveCrew();
+  const { wallet } = useCrew();
+  return (): { ok: boolean; message: string } => {
+    const state = data?.state;
+    if (!state?.storm) return { ok: false, message: "Nothing to repair." };
+    if (wallet < STORM_REPAIR_COST) return { ok: false, message: `Repairs cost ${STORM_REPAIR_COST} XP — you have ${wallet}.` };
+    const next: CrewState = JSON.parse(JSON.stringify(state)) as CrewState;
+    next.spentXp += STORM_REPAIR_COST;
+    next.log = [
+      { day: appDay(), text: `🔨 ${CHAR_META[state.storm.charId].name}'s home repaired. Furnish it — furnished homes hold in storms.` },
+      ...next.log,
+    ].slice(0, 60);
+    next.storm = null;
+    save.mutate(next);
+    return { ok: true, message: "Repaired! Now furnish it against the next one." };
   };
 }
 
@@ -511,6 +830,7 @@ async function awardRequest(state: CrewState, today: string): Promise<CrewState>
   const next: CrewState = JSON.parse(JSON.stringify(state)) as CrewState;
   next.request = { ...req, done: true };
   next.characters[req.charId].bondBonus += 2;
+  announceBond(CHAR_META[req.charId].name, 2);
   next.log = [
     { day: today, text: `${CHAR_META[req.charId].name}'s request fulfilled. +2 bond 💛` },
     ...next.log,
@@ -629,54 +949,21 @@ export function useClaimRequest() {
 /* Playtime: tickets from real life, prizes for the homes              */
 /* ------------------------------------------------------------------ */
 
-import {
-  DROP_COMMON,
-  DROP_RARE,
-  PUZZLE_COMMON_SCORE,
-  PUZZLE_RARE_SCORE,
-  TICKET_STASH_CAP,
-  TICKETS_PER_DAY_FROM_TASKS,
-} from "./crew";
+import { DROP_COMMON, DROP_RARE, TICKET_STASH_CAP } from "./crew";
 
-/** Tickets earned, derived from the ledger: on-time tasks (cap 2/day) + perfect days. */
+/** Tickets — ONE simple rule: a completed day earns 1 ticket. */
 export function useTickets() {
-  const { session } = useAuth();
   const { data } = useCrewState();
-  const earnedQ = useQuery({
-    queryKey: ["ds_tickets_earned", session?.user.id],
-    enabled: !!supabase && !!session,
-    staleTime: 60_000,
-    queryFn: async (): Promise<number> => {
-      const { data: rows, error } = await supabase!
-        .from("ds_xp_events")
-        .select("action, happened_on")
-        .in("action", ["task_on_time", "day_complete"]);
-      if (error) throw error;
-      const onTimeByDay = new Map<string, number>();
-      let earned = 0;
-      for (const r of (rows ?? []) as { action: string; happened_on: string }[]) {
-        if (r.action === "day_complete") earned += 1;
-        else {
-          const n = onTimeByDay.get(r.happened_on) ?? 0;
-          if (n < TICKETS_PER_DAY_FROM_TASKS) {
-            onTimeByDay.set(r.happened_on, n + 1);
-            earned += 1;
-          }
-        }
-      }
-      return earned;
-    },
-  });
+  const dayCompletesQ = useDayCompletes();
   const spent = data?.state?.ticketsSpent ?? 0;
   return {
-    loading: earnedQ.isLoading,
-    available: Math.max(0, Math.min(TICKET_STASH_CAP, (earnedQ.data ?? 0) - spent)),
+    loading: dayCompletesQ.isLoading,
+    available: Math.max(0, Math.min(TICKET_STASH_CAP, (dayCompletesQ.data?.length ?? 0) - spent)),
   };
 }
 
-/** Spend one ticket to start a session; reward bond + furniture at the end.
- *  The puzzle NEVER pays XP — real life is the only XP source. */
-export function usePuzzleSession() {
+/** One ticket = one Crew Memory session. Pays bond + furniture — NEVER XP. */
+export function useMemorySession() {
   const { data } = useCrewState();
   const save = useSaveCrew();
   const today = appDay();
@@ -688,28 +975,25 @@ export function usePuzzleSession() {
     return true;
   };
 
-  const finish = (companion: CharId, score: number): { dropId: string | null } => {
+  const finish = (companion: CharId, perfect: boolean): { dropId: string } => {
+    const dropId = perfect
+      ? DROP_RARE[Math.floor(Math.random() * DROP_RARE.length)]
+      : DROP_COMMON[Math.floor(Math.random() * DROP_COMMON.length)];
     const state = data?.state;
-    if (!state) return { dropId: null };
-    const next: CrewState = JSON.parse(JSON.stringify(state)) as CrewState;
-    next.characters[companion].bondBonus += 3;
-    let dropId: string | null = null;
-    if (score >= PUZZLE_RARE_SCORE) {
-      dropId = DROP_RARE[Math.floor(Math.random() * DROP_RARE.length)];
-    } else if (score >= PUZZLE_COMMON_SCORE) {
-      dropId = DROP_COMMON[Math.floor(Math.random() * DROP_COMMON.length)];
+    if (state) {
+      const next: CrewState = JSON.parse(JSON.stringify(state)) as CrewState;
+      next.characters[companion].bondBonus += 3;
+      next.furnitureInv.push(dropId);
+      next.log = [
+        {
+          day: today,
+          text: `🃏 Crew Memory with ${CHAR_META[companion].name}${perfect ? " — a PERFECT round" : ""}! Won ${furnitureById(dropId)?.emoji} ${furnitureById(dropId)?.title}. +3 bond`,
+        },
+        ...next.log,
+      ].slice(0, 60);
+      save.mutate(next);
+      announceBond(CHAR_META[companion].name, 3);
     }
-    if (dropId) next.furnitureInv.push(dropId);
-    next.log = [
-      {
-        day: today,
-        text: `Played blocks with ${CHAR_META[companion].name} — ${score} points${
-          dropId ? ` and won ${furnitureById(dropId)?.emoji} ${furnitureById(dropId)?.title}!` : "."
-        } +3 bond`,
-      },
-      ...next.log,
-    ].slice(0, 60);
-    save.mutate(next);
     return { dropId };
   };
 

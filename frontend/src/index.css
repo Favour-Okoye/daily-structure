@@ -58,11 +58,23 @@ body {
   animation: soft-pulse 1.6s ease-in-out infinite;
 }
 
+/* Chimney smoke for comfy village homes. */
+@keyframes smoke-rise {
+  0% { transform: translateY(0); opacity: 0.8; }
+  100% { transform: translateY(-10px); opacity: 0; }
+}
+.smoke {
+  animation: smoke-rise 2.6s ease-out infinite;
+  transform-box: fill-box;
+  transform-origin: 50% 100%;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .pop-in,
   .twinkle,
   .idle-bob,
-  .soft-pulse {
+  .soft-pulse,
+  .smoke {
     animation: none;
   }
 }

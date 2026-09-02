@@ -116,6 +116,26 @@ export interface CrewState {
   ticketsSpent: number;
   /** Today's character request, if one came. */
   request: CharRequest | null;
+  /** Today's dilemma (alternates with requests), null = none today. */
+  dilemma: { day: string; id: string; choice: "a" | "b" | null } | null;
+  /** Active level contract: XP paid the tuition, life passes the exam. */
+  exam: {
+    charId: CharId;
+    targetLevel: number;
+    startedOn: string;
+    needed: number;
+    startStreak: number;
+  } | null;
+  /** The island voyage. */
+  voyage: {
+    islandIndex: number;
+    lastLandfallWeek: string | null;
+    pendingLandfall: { weekKey: string; weekXp: number; tier: number } | null;
+  };
+  /** Storm damage on one home, until repaired. */
+  storm: { day: string; charId: CharId } | null;
+  /** A just-passed exam waiting for its celebration scene. */
+  pendingLevelUp: CharId | null;
   log: { day: string; text: string }[];
 }
 
@@ -196,6 +216,11 @@ export function normalizeCrew(raw: unknown, today: string): CrewState {
     furnitureInv: r.furnitureInv ?? [],
     ticketsSpent: r.ticketsSpent ?? 0,
     request: r.request ?? null,
+    dilemma: r.dilemma ?? null,
+    exam: r.exam ?? null,
+    voyage: r.voyage ?? { islandIndex: 0, lastLandfallWeek: null, pendingLandfall: null },
+    storm: r.storm ?? null,
+    pendingLevelUp: r.pendingLevelUp ?? null,
     log: (r.log ?? []).slice(0, 60),
   };
 }
@@ -293,6 +318,8 @@ export function areasOfSlug(slug: string): AreaId[] {
       return ["mind"];
     case "quiet_time":
       return ["calm"];
+    case "skill_block":
+      return ["skills"];
     case "confession":
       return ["faith", "plan"];
     default:
@@ -373,16 +400,16 @@ function areaDoneOn(area: AreaId, day: string, areaDays: Map<string, AreaDay>): 
  * Mood over the last 3 expected days ending yesterday, with a live bump for
  * anything done today. New sailors (<2 expected days of history) start happy.
  */
-export function areaMood(
+export function areaMoodDetail(
   area: AreaId,
   today: string,
   startedOn: string,
   season: Season,
   areaDays: Map<string, AreaDay>
-): Mood {
+): { mood: Mood; done: number; of: number; doneToday: boolean } {
   const days = recentExpectedDays(area, today, startedOn, season, areaDays);
   const doneToday = areaDoneOn(area, today, areaDays);
-  if (days.length < 2) return "happy"; // honeymoon — the game just started
+  if (days.length < 2) return { mood: "happy", done: days.length, of: days.length, doneToday };
   const done = days.filter((d) => areaDoneOn(area, d, areaDays)).length;
   const ratio = done / days.length;
   let mood: Mood;
@@ -391,8 +418,30 @@ export function areaMood(
   else if (ratio > 0) mood = "worried";
   else mood = "sad";
   if (doneToday) mood = bumpMood(mood);
-  return mood;
+  return { mood, done, of: days.length, doneToday };
 }
+
+export function areaMood(
+  area: AreaId,
+  today: string,
+  startedOn: string,
+  season: Season,
+  areaDays: Map<string, AreaDay>
+): Mood {
+  return areaMoodDetail(area, today, startedOn, season, areaDays).mood;
+}
+
+/** Human words for each area, for the "why" lines. */
+export const AREA_VERB: Record<AreaId, string> = {
+  body: "trained",
+  faith: "kept the faith",
+  mind: "fed the mind",
+  calm: "sat quietly",
+  plan: "closed the day",
+  skills: "practiced",
+  provision: "prepared the future",
+  overall: "showed up",
+};
 
 const MOOD_ORDER: Mood[] = ["sad", "worried", "neutral", "happy"];
 function bumpMood(m: Mood): Mood {
@@ -783,13 +832,392 @@ const REQUEST_TEXT: Partial<Record<CharId, { kind: CharRequest["kind"]; targetSl
   sasuke: { kind: "anchor", targetSlug: "exercise", text: "Hn. Train. Strength isn't given." },
 };
 
-/** ~55% of days one recruited character asks for something. Deterministic per day. */
+/** Odd-hash days bring a request, even-hash days may bring a dilemma. Deterministic. */
 export function requestForDay(day: string, recruited: CharId[]): CharRequest | null {
   if (recruited.length === 0) return null;
   const h = seededHash(day);
-  if (h % 100 >= 55) return null;
+  if (h % 2 !== 1 || h % 100 >= 80) return null;
   const charId = recruited[h % recruited.length];
   const plan = REQUEST_TEXT[charId];
   if (!plan) return null;
   return { day, charId, kind: plan.kind, targetSlug: plan.targetSlug, text: plan.text, done: false };
+}
+
+/* ------------------------------------------------------------------ */
+/* Level contracts — XP pays the tuition, LIFE passes the exam.        */
+/* IRON RULE: conditions count day-level facts only. The app never     */
+/* judges by WHEN something was checked — she checks late, honestly.   */
+/* ------------------------------------------------------------------ */
+
+export interface ExamDef {
+  /** needed[i] = requirement for level i+2 */
+  needed: number[];
+  /** What counts as one qualifying day. */
+  metric: "area_day" | "perfect_day" | "streak_add" | "quiet_day" | "task_day";
+  text: (n: number) => string;
+}
+
+export const EXAMS: Record<CharId, ExamDef> = {
+  luffy: { needed: [2, 3, 4], metric: "perfect_day", text: (n) => `Complete ${n} full days — every required anchor. A captain's proof.` },
+  zoro: { needed: [3, 4, 5], metric: "area_day", text: (n) => `Train on ${n} days. Any hour counts — done is done.` },
+  nami: { needed: [3, 4, 5], metric: "area_day", text: (n) => `Close ${n} days properly at the ceremony.` },
+  usopp: { needed: [2, 3], metric: "area_day", text: (n) => `Complete ${n} skill blocks. Legends need material.` },
+  sanji: { needed: [2, 3], metric: "task_day", text: (n) => `${n} days with job-prep work done. Stock the pantry.` },
+  chopper: { needed: [3, 4], metric: "quiet_day", text: (n) => `${n} real quiet times. Doctor's orders.` },
+  robin: { needed: [3, 4], metric: "area_day", text: (n) => `Feed your mind on ${n} days — book or videos.` },
+  naruto: { needed: [3, 5, 7], metric: "streak_add", text: (n) => `Grow the streak by ${n} more days. Believe it.` },
+  sasuke: { needed: [3, 4], metric: "area_day", text: (n) => `Train on ${n} days. Strength isn't given.` },
+  sakura: { needed: [2, 3], metric: "task_day", text: (n) => `${n} days with tasks completed. Shannaro.` },
+  kakashi: { needed: [4, 5], metric: "quiet_day", text: (n) => `${n} quiet sits. Read the silence.` },
+  hinata: { needed: [3, 4], metric: "area_day", text: (n) => `Walk in faith on ${n} days.` },
+};
+
+/** Area used when metric is area_day (falls back per character). */
+export function examArea(charId: CharId): AreaId {
+  const special: Partial<Record<CharId, AreaId>> = {
+    nami: "plan",
+    usopp: "skills",
+    sasuke: "body",
+    robin: "mind",
+    hinata: "faith",
+  };
+  return special[charId] ?? CHAR_AREA[charId] ?? "overall";
+}
+
+/* ------------------------------------------------------------------ */
+/* The morning deck scene — the crew talks about her real yesterday.   */
+/* ------------------------------------------------------------------ */
+
+export interface YesterdayFacts {
+  day: string;
+  perfect: boolean;
+  doneSlugs: Set<string>;
+  missedRequired: string[];
+  tasksDone: number;
+  graceUsed: boolean;
+  streak: number;
+  overdueNow: number;
+  isSundayToday: boolean;
+}
+
+export interface SceneLine {
+  charId: CharId;
+  text: string;
+}
+
+interface SceneTemplate {
+  id: string;
+  needs: CharId[];
+  when: (y: YesterdayFacts) => boolean;
+  lines: (y: YesterdayFacts) => SceneLine[];
+}
+
+const SCENES: SceneTemplate[] = [
+  {
+    id: "perfect_cheer", needs: ["luffy", "nami"],
+    when: (y) => y.perfect,
+    lines: (y) => [
+      { charId: "luffy", text: `A FULL day yesterday! Every anchor! That's my navigator of life!` },
+      { charId: "nami", text: `Streak's at ${y.streak}. Keep this up and I'll almost stop worrying.` },
+    ],
+  },
+  {
+    id: "task_storm", needs: ["nami", "zoro"],
+    when: (y) => y.tasksDone >= 3,
+    lines: (y) => [
+      { charId: "nami", text: `${y.tasksDone} tasks cleared off the map yesterday. THAT'S how you sail.` },
+      { charId: "zoro", text: `Hmph. Decent. Now do it again.` },
+    ],
+  },
+  {
+    id: "exercise_missed", needs: ["zoro", "luffy"],
+    when: (y) => y.missedRequired.includes("exercise"),
+    lines: () => [
+      { charId: "zoro", text: `No training yesterday. Swords don't sharpen themselves.` },
+      { charId: "luffy", text: `Oi, ease up — today's a new sea. She'll show up.` },
+    ],
+  },
+  {
+    id: "book_missed", needs: ["robin"],
+    when: (y) => y.missedRequired.includes("book"),
+    lines: () => [
+      { charId: "robin", text: `The bookmark didn't move yesterday. Fufufu… it's patient. I'm slightly less so.` },
+    ],
+  },
+  {
+    id: "quiet_done", needs: ["chopper"],
+    when: (y) => y.doneSlugs.has("quiet_time"),
+    lines: () => [
+      { charId: "chopper", text: `You actually sat still yesterday! Best medicine there is. (Not that I'm pleased, you jerk~)` },
+    ],
+  },
+  {
+    id: "grace_day", needs: ["hinata", "luffy"],
+    when: (y) => y.graceUsed,
+    lines: () => [
+      { charId: "hinata", text: `You used grace yesterday… that's not weakness. Honest rest is also faith.` },
+      { charId: "luffy", text: `What she said! Today we go again!` },
+    ],
+  },
+  {
+    id: "overdue_nag", needs: ["nami"],
+    when: (y) => y.overdueNow >= 1,
+    lines: (y) => [
+      { charId: "nami", text: `${y.overdueNow} overdue task${y.overdueNow > 1 ? "s" : ""} on my map this morning. We don't sail with dead weight — clear it today.` },
+    ],
+  },
+  {
+    id: "streak_high", needs: ["naruto", "zoro"],
+    when: (y) => y.streak >= 7,
+    lines: (y) => [
+      { charId: "naruto", text: `${y.streak} days without breaking! That's a real ninja streak, dattebayo!` },
+      { charId: "zoro", text: `Streaks are just training you can count.` },
+    ],
+  },
+  {
+    id: "sunday_rest", needs: ["luffy", "chopper"],
+    when: (y) => y.isSundayToday,
+    lines: () => [
+      { charId: "luffy", text: `REST DAY! Captain's orders: church, food, nothing else!` },
+      { charId: "chopper", text: `Doctor's orders too! Only the confession tonight. Now rest!` },
+    ],
+  },
+  {
+    id: "faith_steady", needs: ["hinata"],
+    when: (y) => y.doneSlugs.has("devotional") && y.doneSlugs.has("confession"),
+    lines: () => [
+      { charId: "hinata", text: `Devotional in the morning, confession at night… your day was held at both ends. I noticed.` },
+    ],
+  },
+  {
+    id: "rough_day", needs: ["luffy", "nami"],
+    when: (y) => y.missedRequired.length >= 3 && !y.graceUsed,
+    lines: (y) => [
+      { charId: "luffy", text: `Yesterday was rough — ${y.missedRequired.length} anchors slipped. So what! Rough seas make real sailors!` },
+      { charId: "nami", text: `Translation: small start, right now. One checkmark and we're moving.` },
+    ],
+  },
+  {
+    id: "banter_meat", needs: ["luffy", "sanji"],
+    when: () => true,
+    lines: () => [
+      { charId: "luffy", text: `Sanjiii! What's for breakfast? Something with meat?` },
+      { charId: "sanji", text: `For the lady of this voyage, anything. For you — whatever's left.` },
+    ],
+  },
+  {
+    id: "banter_maps", needs: ["nami", "usopp"],
+    when: () => true,
+    lines: () => [
+      { charId: "nami", text: `The next island is closer than it looks. Every XP is wind in the sails.` },
+      { charId: "usopp", text: `And when we land, I shall tell the story of how I saw it FIRST!` },
+    ],
+  },
+  {
+    id: "banter_calm", needs: ["zoro", "robin"],
+    when: () => true,
+    lines: () => [
+      { charId: "zoro", text: `Quiet morning. Good for training.` },
+      { charId: "robin", text: `Or a chapter. The sea doesn't mind which.` },
+    ],
+  },
+  {
+    id: "banter_solo_luffy", needs: ["luffy"],
+    when: () => true,
+    lines: () => [
+      { charId: "luffy", text: `Ooooi! The deck's ready, the sea's ready, and I'M ready! What are we conquering today?` },
+    ],
+  },
+];
+
+/** Deterministic morning scene from yesterday's real facts. */
+export function sceneForDay(day: string, aboard: CharId[], y: YesterdayFacts): SceneLine[] {
+  const present = new Set(aboard);
+  const eligible = SCENES.filter(
+    (s) => s.when(y) && s.needs.every((c) => present.has(c))
+  );
+  if (eligible.length === 0) return [];
+  const pick = eligible[seededHash(day + ":scene") % eligible.length];
+  return pick.lines(y);
+}
+
+/* ------------------------------------------------------------------ */
+/* Daily dilemmas — small choices, real (small) consequences.          */
+/* Choices pay bond or furniture. NEVER XP.                            */
+/* ------------------------------------------------------------------ */
+
+export interface DilemmaOption {
+  label: string;
+  bond?: Partial<Record<CharId, number>>;
+  furniture?: string;
+  result: string;
+}
+
+export interface DilemmaDef {
+  id: string;
+  needs: CharId[];
+  text: string;
+  a: DilemmaOption;
+  b: DilemmaOption;
+}
+
+export const DILEMMAS: DilemmaDef[] = [
+  {
+    id: "leftovers", needs: ["luffy", "sanji"],
+    text: "Luffy is caught elbow-deep in tomorrow's food supplies. Sanji is reaching for the wooden spoon.",
+    a: { label: "Let him eat — he's the captain", bond: { luffy: 2 }, result: "Luffy beams. Sanji mutters about savages, but cooks more anyway." },
+    b: { label: "Side with the cook", bond: { sanji: 2 }, result: "Sanji bows elegantly. Luffy sulks for exactly four minutes." },
+  },
+  {
+    id: "lost_zoro", needs: ["zoro", "nami"],
+    text: "Zoro set out for the training spot an hour ago. The training spot is six steps from his house. He is now somehow at the beach.",
+    a: { label: "Draw him a map", bond: { zoro: 2 }, result: "He studies it upside down, grunts thanks, and arrives only slightly late." },
+    b: { label: "Let him find his way", bond: { nami: 2 }, result: "Nami cackles. Zoro shows up at sunset, insisting the beach WAS the plan." },
+  },
+  {
+    id: "nap_guard", needs: ["chopper"],
+    text: "Chopper found your rest-block spot and is guarding it fiercely. 'No tasks allowed past this point!'",
+    a: { label: "Honor the guard — rest properly", bond: { chopper: 2 }, result: "You rest. He checks your pulse twice and declares you 'much improved.'" },
+    b: { label: "Negotiate ten minutes of reading", bond: { chopper: 1 }, result: "He allows it, but sets a tiny hourglass and watches it the whole time." },
+  },
+  {
+    id: "tall_tale", needs: ["usopp"],
+    text: "Usopp is telling the village your streak is 'one hundred days and blessed by sea kings.' It is not.",
+    a: { label: "Correct the record", bond: { usopp: 1 }, result: "'FINE. But when it IS a hundred, I get to say I called it.'" },
+    b: { label: "Let the legend grow", bond: { usopp: 2 }, result: "By evening the story includes a whirlpool. You come out of it very well." },
+  },
+  {
+    id: "market_find", needs: ["nami"],
+    text: "Nami haggled a trader down on a crate of village goods. 'It's a STEAL. We just… have to take it right now.'",
+    a: { label: "Trust the navigator", furniture: "lantern", result: "It's a paper lantern, and it's lovely. Nami looks unbearably smug." },
+    b: { label: "Walk away calmly", bond: { nami: 1 }, result: "'…Respect. Slow money is real money.' She notes it on the map for later." },
+  },
+  {
+    id: "shy_prayer", needs: ["hinata"],
+    text: "Hinata is lingering by your door, pressing her fingers together. She wants to ask something.",
+    a: { label: "Invite her in to pray together", bond: { hinata: 3 }, result: "Her whole face lights up. The quiet afterwards feels like a roof over the day." },
+    b: { label: "Smile and wave from the desk", bond: { hinata: 1 }, result: "She nods quickly and leaves a folded verse under your door." },
+  },
+  {
+    id: "late_kakashi", needs: ["kakashi"],
+    text: "Kakashi arrives three hours late to the village meeting. 'A black cat crossed my path, so I took the long way around the sea.'",
+    a: { label: "Call it out", bond: { kakashi: 1 }, result: "One visible eye crinkles. 'Fair.' He is somehow late leaving, too." },
+    b: { label: "Let it slide", bond: { kakashi: 2 }, result: "He hands you a book you mentioned once, weeks ago. So THAT'S where he was." },
+  },
+  {
+    id: "roof_brooder", needs: ["sasuke"],
+    text: "Sasuke has been sitting on his roof since dawn, watching the horizon dramatically.",
+    a: { label: "Bring him tea, say nothing", bond: { sasuke: 3 }, result: "He takes it. Ten minutes later: '…the horizon is acceptable today.' High praise." },
+    b: { label: "Yell that dinner's ready", bond: { sasuke: 1 }, result: "He appears at the table without ever visibly climbing down." },
+  },
+  {
+    id: "crate_reorg", needs: ["sakura"],
+    text: "Sakura has opinions about how your furniture crate is organized. Loud opinions.",
+    a: { label: "Let her reorganize everything", bond: { sakura: 2 }, result: "It's… genuinely better now. Everything is labeled. SHANNARO." },
+    b: { label: "Defend your chaos", bond: { sakura: 1 }, result: "'Fine! But when you can't find the lamp, I'm saying nothing.' She says something." },
+  },
+  {
+    id: "found_shell", needs: ["luffy", "robin"],
+    text: "Luffy found 'a super rare treasure' on the beach. Robin identifies it as a fairly ordinary — though pretty — shell.",
+    a: { label: "Treasure it anyway", furniture: "shell", result: "It goes on display. Luffy tells everyone. Robin smiles and lets him." },
+    b: { label: "Return it to the sea", bond: { robin: 2 }, result: "'The sea keeps its libraries too,' Robin says. Luffy salutes the waves." },
+  },
+  {
+    id: "storm_prep", needs: ["zoro", "robin"],
+    text: "Clouds are stacking on the horizon. Zoro wants to board up windows; Robin wants to move the books first.",
+    a: { label: "Windows first", bond: { zoro: 2 }, result: "The village stands ready. Zoro nods once, which is a speech, from him." },
+    b: { label: "Books first", bond: { robin: 2 }, result: "The library survives anything now. Robin shelves them by candlelight, content." },
+  },
+  {
+    id: "ramen_night", needs: ["naruto", "sanji"],
+    text: "Naruto is campaigning loudly for a village ramen night. Sanji has Opinions about instant noodles.",
+    a: { label: "Ramen night!", bond: { naruto: 2 }, result: "Sanji makes it from scratch out of spite. It's the best ramen anyone's had, dattebayo." },
+    b: { label: "Chef's choice", bond: { sanji: 2 }, result: "A five-course meal appears. Naruto forgives everything by course two." },
+  },
+];
+
+/** Even-hash days may bring a dilemma (requests take odd days). */
+export function dilemmaForDay(day: string, aboard: CharId[]): DilemmaDef | null {
+  const h = seededHash(day);
+  if (h % 2 !== 0 || h % 100 >= 70) return null;
+  const present = new Set(aboard);
+  const eligible = DILEMMAS.filter((d) => d.needs.every((c) => present.has(c)));
+  if (eligible.length === 0) return null;
+  return eligible[seededHash(day + ":dilemma") % eligible.length];
+}
+
+/* ------------------------------------------------------------------ */
+/* The island voyage — the week's XP sails the ship; Sunday = landfall.*/
+/* ------------------------------------------------------------------ */
+
+export interface IslandDef {
+  id: string;
+  name: string;
+  emoji: string;
+  hue: number; // island art hue
+  blurb: string;
+}
+
+export const ISLANDS: IslandDef[] = [
+  { id: "dawn", name: "Dawn Shore", emoji: "🌅", hue: 28, blurb: "Where every voyage begins — the first sand your new life stands on." },
+  { id: "tangerine", name: "Tangerine Cove", emoji: "🍊", hue: 24, blurb: "Groves heavy with fruit. Nami won't say why she's smiling." },
+  { id: "sword", name: "Sword Rock", emoji: "⚔️", hue: 150, blurb: "A cliff shaped like a blade. Zoro calls it 'home decor.'" },
+  { id: "compass", name: "Compass Cay", emoji: "🧭", hue: 210, blurb: "Every path here somehow points forward." },
+  { id: "sleepy", name: "Sleepy Lagoon", emoji: "😴", hue: 250, blurb: "Water so calm it naps. Rest blocks were invented here." },
+  { id: "ramen", name: "Ramen Rock", emoji: "🍜", hue: 35, blurb: "Steam rises from the caves. Naruto refuses to leave." },
+  { id: "library", name: "Library Atoll", emoji: "📚", hue: 270, blurb: "Shelves carved into coral. Robin has gone very quiet." },
+  { id: "blossom", name: "Blossom Bay", emoji: "🌸", hue: 330, blurb: "Petals on every wave. Sakura pretends not to be moved." },
+  { id: "lantern", name: "Lantern Reef", emoji: "🏮", hue: 15, blurb: "At night the whole reef glows like a promise kept." },
+  { id: "byakugan", name: "Moonveil Bluff", emoji: "🌙", hue: 240, blurb: "From here, Hinata says, you can see everything gently." },
+  { id: "storm", name: "Storm's Rest", emoji: "⛈️", hue: 220, blurb: "Where storms come to retire. Respect them and pass." },
+  { id: "quiet", name: "Quiet Hollow", emoji: "🌊", hue: 190, blurb: "Ten minutes here feels like a whole sabbath." },
+  { id: "feast", name: "Feast Haven", emoji: "🍖", hue: 20, blurb: "Tables already set. Sanji is judging the kitchen. It passes." },
+  { id: "starlight", name: "Starlight Sandbar", emoji: "✨", hue: 45, blurb: "The sand keeps yesterday's light. Walk slowly." },
+  { id: "glasshouse", name: "Glasshouse Isle", emoji: "🪟", hue: 160, blurb: "A garden under glass, sky in every pane. It feels… familiar." },
+  { id: "anchorage", name: "Grand Anchorage", emoji: "⚓", hue: 205, blurb: "Where great voyages pause — never end." },
+];
+
+export function islandAt(index: number): IslandDef {
+  return ISLANDS[index % ISLANDS.length];
+}
+
+/** Landfall tier from the week's XP — richness of the feast + the chest. */
+export function landfallTier(weekXp: number): number {
+  if (weekXp >= 1100) return 4;
+  if (weekXp >= 700) return 3;
+  if (weekXp >= 300) return 2;
+  return 1;
+}
+
+export const TIER_LINES: Record<number, string> = {
+  1: "A quiet cove landing — the ship limped in, but it LANDED. Next week we feast bigger.",
+  2: "A good landing! The crew unloads with songs.",
+  3: "A grand landfall — flags up, village cheering from the rails!",
+  4: "A LEGENDARY landing. Even the sea claps.",
+};
+
+/* ------------------------------------------------------------------ */
+/* Storms — a bare house risks damage; a furnished home shrugs it off. */
+/* ------------------------------------------------------------------ */
+
+export const STORM_CHANCE_PCT = 12;
+export const STORM_REPAIR_COST = 100;
+export const STORM_SAFE_FURNITURE = 2;
+
+/** Deterministic per-day storm check; returns the damaged char or null. */
+export function stormTarget(
+  day: string,
+  state: Pick<CrewState, "village" | "storm" | "characters">
+): CharId | null {
+  if (state.storm) return null; // one damage at a time
+  if (seededHash(day + ":storm") % 100 >= STORM_CHANCE_PCT) return null;
+  const bare = ALL_CHARS.filter(
+    (id) =>
+      state.characters[id].recruited &&
+      !state.characters[id].gone &&
+      state.village[id].built &&
+      state.village[id].furniture.length < STORM_SAFE_FURNITURE
+  );
+  if (bare.length === 0) return null;
+  return bare[seededHash(day + ":stormpick") % bare.length];
 }

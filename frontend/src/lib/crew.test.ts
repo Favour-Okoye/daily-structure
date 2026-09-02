@@ -3,12 +3,18 @@ import {
   areaMood,
   bondOf,
   buildAreaDays,
+  dilemmaForDay,
+  landfallTier,
   neglectRunOf,
   normalizeCrew,
   questRequirementMet,
+  requestForDay,
+  sceneForDay,
   STARTING_CREW,
+  stormTarget,
   WALKOUT_GONE,
   type LogRow,
+  type YesterdayFacts,
 } from "./crew";
 
 const SEASON = "gap" as const;
@@ -101,6 +107,77 @@ describe("questRequirementMet — comeback steps", () => {
         new Set(["devotional", "noon_prayer", "bible", "family_prayers", "confession"])
       )
     ).toBe(true);
+  });
+});
+
+function facts(over: Partial<YesterdayFacts> = {}): YesterdayFacts {
+  return {
+    day: "2026-08-27",
+    perfect: false,
+    doneSlugs: new Set(),
+    missedRequired: [],
+    tasksDone: 0,
+    graceUsed: false,
+    streak: 2,
+    overdueNow: 0,
+    isSundayToday: false,
+    ...over,
+  };
+}
+
+describe("the morning deck scene", () => {
+  it("is deterministic for a given day", () => {
+    const y = facts({ missedRequired: ["exercise"] });
+    const a = sceneForDay("2026-08-28", ["luffy", "zoro", "nami"], y);
+    const b = sceneForDay("2026-08-28", ["luffy", "zoro", "nami"], y);
+    expect(a).toEqual(b);
+    expect(a.length).toBeGreaterThan(0);
+  });
+  it("never casts characters who aren't aboard", () => {
+    const lines = sceneForDay("2026-08-28", ["luffy"], facts({ perfect: true }));
+    for (const l of lines) expect(l.charId).toBe("luffy");
+  });
+});
+
+describe("requests and dilemmas share the calendar politely", () => {
+  it("no day gets both", () => {
+    for (let i = 0; i < 30; i++) {
+      const day = `2026-09-${String(i + 1).padStart(2, "0")}`;
+      const req = requestForDay(day, ["luffy", "zoro", "nami"]);
+      const dil = dilemmaForDay(day, ["luffy", "zoro", "nami"]);
+      expect(req && dil).toBeFalsy();
+    }
+  });
+});
+
+describe("landfall tiers", () => {
+  it("scale with the week's XP", () => {
+    expect(landfallTier(120)).toBe(1);
+    expect(landfallTier(450)).toBe(2);
+    expect(landfallTier(800)).toBe(3);
+    expect(landfallTier(1500)).toBe(4);
+  });
+});
+
+describe("storms", () => {
+  it("only ever hit built-but-bare homes", () => {
+    const state = normalizeCrew({}, "2026-08-27");
+    // nothing built → never a target, any day
+    for (let i = 1; i <= 28; i++) {
+      expect(stormTarget(`2026-09-${String(i).padStart(2, "0")}`, state)).toBeNull();
+    }
+    state.village.zoro.built = true; // bare walls
+    state.village.nami.built = true;
+    state.village.nami.furniture = ["lamp", "rug"]; // furnished = safe
+    let hitZoro = 0;
+    let hitNami = 0;
+    for (let i = 1; i <= 28; i++) {
+      const t = stormTarget(`2026-09-${String(i).padStart(2, "0")}`, state);
+      if (t === "zoro") hitZoro++;
+      if (t === "nami") hitNami++;
+    }
+    expect(hitNami).toBe(0);
+    expect(hitZoro).toBeGreaterThan(0); // ~12% of 28 days
   });
 });
 

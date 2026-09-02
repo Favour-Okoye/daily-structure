@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "./supabase";
 import { useAuth } from "./auth";
-import { appDay, shiftDay } from "./day";
+import { appDay, mondayOf } from "./day";
 import { awardCustom, DS_XP } from "./xp";
 
 export interface DsTask {
@@ -50,7 +50,8 @@ export function useOpenTasks() {
 
 export function useRecentDoneTasks() {
   const { session } = useAuth();
-  const from = shiftDay(appDay(), -7);
+  // "This week" means THIS week — Monday 04:00 onward, same as goals and landfall.
+  const from = mondayOf(appDay());
   return useQuery({
     queryKey: ["ds_tasks_done", session?.user.id, from],
     enabled: !!supabase && !!session,

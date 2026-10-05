@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import confetti from "canvas-confetti";
 import { Link } from "react-router-dom";
-import { appDay, daySortKey, fmtMin, wallMinutes, weekdayOf } from "../lib/day";
+import { appDay, daySortKey, fmtMin, shiftDay, wallMinutes, weekdayOf } from "../lib/day";
 import {
   anchorsForDay,
   churchForDay,
@@ -12,13 +12,17 @@ import {
 } from "../lib/anchors";
 import {
   flushOutbox,
+  isOff,
   useAnchorLog,
   useCheckAnchor,
   useCheckChurch,
+  useExerciseTarget,
   useMoneyTreeVideoCount,
+  useOffs,
   useRainWatch,
   useSeason,
   useSettings,
+  useToggleOff,
 } from "../lib/queries";
 import { useGrowth } from "../lib/stats";
 import { useAuth } from "../lib/auth";
@@ -28,13 +32,14 @@ import { CeremonyGate } from "../components/CeremonyGate";
 import {
   announceBond,
   useAdvanceSkill,
+  useAnchorRange,
   useAnswerDilemma,
   useApprovePlan,
   useClaimRequest,
   useCrew,
   useGrace,
 } from "../lib/crewQueries";
-import { areasOfSlug, CHAR_AREA, CHAR_META, SKILL_DECK } from "../lib/crew";
+import { areasOfSlug, bodyDaysInWindow, CHAR_AREA, CHAR_META, SKILL_DECK } from "../lib/crew";
 import { Chibi } from "../components/chibi/Chibi";
 import { useCompleteTask, useDayPlan, useOpenTasks, type DsTask } from "../lib/tasksQueries";
 import type { PlanSlot } from "../lib/planner";
@@ -90,19 +95,25 @@ export function Today() {
   const season = useSeason();
   const isSunday = weekdayOf(day) === 0;
   const nowMin = wallMinutes();
+  const yday = shiftDay(day, -1);
+  const offs = useOffs();
+  const toggleOff = useToggleOff();
+  const exerciseTarget = useExerciseTarget();
 
   const settingsQ = useSettings();
   const bookOverride = (settingsQ.data?.data as { book?: { title?: string; chapters?: number } } | undefined)?.book;
 
   const items = useMemo<TimelineItem[]>(() => {
-    const anchors = anchorsForDay(day, season).map((a) => {
-      if (a.slug === "book" && bookOverride?.title) {
-        const ch = bookOverride.chapters ?? 2;
-        return { ...a, title: `“${bookOverride.title}” — ${ch} chapter${ch > 1 ? "s" : ""}` };
-      }
-      return a;
-    });
-    const church = churchForDay(day);
+    const anchors = anchorsForDay(day, season)
+      .filter((a) => a.slug !== "exercise" && !isOff(offs, day, a.slug))
+      .map((a) => {
+        if (a.slug === "book" && bookOverride?.title) {
+          const ch = bookOverride.chapters ?? 2;
+          return { ...a, title: `“${bookOverride.title}” — ${ch} chapter${ch > 1 ? "s" : ""}` };
+        }
+        return a;
+      });
+    const church = churchForDay(day).filter((e) => !isOff(offs, day, `church_${e.slug}`));
     const rows: TimelineItem[] = [];
     for (const e of church) {
       rows.push({
@@ -144,7 +155,12 @@ export function Today() {
       });
     }
     return rows.sort((x, y) => daySortKey(x.startMin) - daySortKey(y.startMin));
-  }, [day, season, bookOverride?.title, bookOverride?.chapters]);
+  }, [day, season, bookOverride?.title, bookOverride?.chapters, offs]);
+
+  const exerciseDef = useMemo(
+    () => anchorsForDay(day, season).find((a) => a.slug === "exercise"),
+    [day, season]
+  );
 
   const logQ = useAnchorLog(day);
   const log = logQ.data ?? {};
@@ -235,10 +251,12 @@ export function Today() {
   }, [mtCountQ.data, mtDone, logQ.isSuccess]);
 
   const required = useMemo(() => {
-    const slugs = requiredSlugs(day, season);
-    for (const e of churchForDay(day)) slugs.push(`church_${e.slug}`);
+    const slugs = requiredSlugs(day, season).filter((s) => !isOff(offs, day, s));
+    for (const e of churchForDay(day)) {
+      if (!isOff(offs, day, `church_${e.slug}`)) slugs.push(`church_${e.slug}`);
+    }
     return slugs;
-  }, [day, season]);
+  }, [day, season, offs]);
   const doneRequired = required.filter((s) => log[s]).length;
   const dayComplete = logQ.isSuccess && required.length > 0 && doneRequired === required.length;
 
@@ -251,6 +269,30 @@ export function Today() {
   }, [dayComplete, day]);
 
   const quietAnchor = items.find((i) => i.anchor?.kind === "quiet")?.anchor;
+
+  // Yesterday's forgotten taps — catch up until 20:00, onto yesterday's date.
+  const yLogQ = useAnchorLog(yday);
+  const yLog = yLogQ.data ?? {};
+  const checkYesterday = useCheckAnchor(yday);
+  const checkYesterdayChurch = useCheckChurch(yday);
+  const rangeQ = useAnchorRange();
+  const bodyDays = bodyDaysInWindow(rangeQ.data ?? [], day);
+  const yesterdayList = useMemo(() => {
+    if (nowMin >= 20 * 60 || !yLogQ.isSuccess) return [];
+    const out: { slug: string; title: string; emoji: string; def?: AnchorForDay; church?: ChurchEvent }[] = [];
+    for (const a of anchorsForDay(yday, season)) {
+      if (!a.required && a.slug !== "exercise") continue;
+      if (yLog[a.slug] || isOff(offs, yday, a.slug)) continue;
+      out.push({ slug: a.slug, title: a.title, emoji: a.emoji, def: a });
+    }
+    for (const e of churchForDay(yday)) {
+      const key = `church_${e.slug}`;
+      if (yLog[key] || isOff(offs, yday, key)) continue;
+      out.push({ slug: key, title: e.title, emoji: e.emoji, church: e });
+    }
+    return out;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [yday, season, yLogQ.data, offs, nowMin]);
 
   // Rain watch: she bikes to evening church — a wet forecast deserves an early heads-up.
   const hasEveningChurch = churchForDay(day).some((e) => e.startMin >= 17 * 60);
@@ -383,15 +425,19 @@ export function Today() {
         </Link>
       )}
 
-      {session && !!planQ.data?.plan && (
+      {session && (
         <button
           onClick={() => {
-            setDraft(JSON.parse(JSON.stringify(planQ.data!.plan)) as typeof draft);
+            setDraft(
+              planQ.data?.plan
+                ? (JSON.parse(JSON.stringify(planQ.data.plan)) as typeof draft)
+                : null
+            );
             setAdjusting(true);
           }}
           className="w-full rounded-3xl bg-white px-4 py-2 text-xs font-black text-sky-700 shadow-sm ring-1 ring-sky-100 hover:bg-sky-50"
         >
-          🗺️ Adjust today's plan — life moved, the map can too
+          🗺️ Adjust today — nothing is permanently fixed
         </button>
       )}
 
@@ -449,6 +495,66 @@ export function Today() {
             🌧️ {rainProb}% chance of rain around church time tonight. Bicycle call — decide early,
             and if the sky wins, a grace token has your back. 🕊️
           </p>
+        </div>
+      )}
+
+      {/* Yesterday — tap what was true (vanishes at 20:00) */}
+      {session && yesterdayList.length > 0 && (
+        <div className="rounded-3xl bg-amber-50 p-4 shadow-sm ring-1 ring-amber-200">
+          <p className="text-[10px] font-black uppercase tracking-widest text-amber-700">
+            🕯️ Yesterday — tap what was true
+          </p>
+          <div className="mt-2 flex flex-wrap gap-1.5">
+            {yesterdayList.map((y) => (
+              <button
+                key={y.slug}
+                disabled={checkYesterday.isPending || checkYesterdayChurch.isPending}
+                onClick={() => {
+                  if (y.church) checkYesterdayChurch.mutate({ event: y.church });
+                  else if (y.def) checkYesterday.mutate({ def: y.def, meta: { retro: true } });
+                }}
+                className="rounded-full bg-white px-3 py-1.5 text-xs font-bold text-stone-600 shadow-sm hover:bg-amber-100"
+              >
+                {y.emoji} {y.title} ✓
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Movement — a weekly target, not a daily duty */}
+      {session && !isSunday && exerciseDef && (
+        <div className="flex items-center gap-3 rounded-3xl bg-white p-3 shadow-sm ring-1 ring-sky-100">
+          <span className="text-2xl">💪</span>
+          <div className="min-w-0 flex-1">
+            <div className="flex items-center gap-2">
+              <span className="text-sm font-black text-stone-800">Movement</span>
+              <span className="rounded-full bg-sky-50 px-2 py-0.5 text-[10px] font-black text-sky-700">
+                {bodyDays}/{exerciseTarget} this week
+              </span>
+            </div>
+            <div className="mt-1 flex gap-1">
+              {Array.from({ length: exerciseTarget }, (_, i) => (
+                <span
+                  key={i}
+                  className={`h-1.5 w-7 rounded-full ${i < bodyDays ? "bg-amber-400" : "bg-stone-100"}`}
+                />
+              ))}
+            </div>
+          </div>
+          {log["exercise"] ? (
+            <span className="text-xl">✅</span>
+          ) : (
+            <button
+              disabled={checkAnchor.isPending}
+              onClick={() =>
+                checkAnchor.mutate({ def: exerciseDef }, { onSuccess: () => bondFor("exercise") })
+              }
+              className="shrink-0 rounded-full bg-amber-400 px-3 py-1.5 text-xs font-black text-sky-950 hover:bg-amber-300"
+            >
+              Moved today +15
+            </button>
+          )}
         </div>
       )}
 
@@ -589,13 +695,27 @@ export function Today() {
                     +15 XP
                   </button>
                 ) : item.anchor?.kind === "quiet" ? (
-                  <button
-                    disabled={!session}
-                    onClick={() => setQuietOpen(true)}
-                    className="rounded-full bg-sky-900 px-3 py-1.5 text-xs font-black text-white transition enabled:hover:bg-sky-800 disabled:opacity-30"
-                  >
-                    Begin 🌊
-                  </button>
+                  <>
+                    <button
+                      disabled={!session}
+                      onClick={() => setQuietOpen(true)}
+                      className="rounded-full bg-sky-900 px-3 py-1.5 text-xs font-black text-white transition enabled:hover:bg-sky-800 disabled:opacity-30"
+                    >
+                      Begin 🌊
+                    </button>
+                    <button
+                      disabled={!session || checkAnchor.isPending}
+                      onClick={() =>
+                        checkAnchor.mutate(
+                          { def: item.anchor!, meta: { retro: true } },
+                          { onSuccess: () => bondFor("quiet_time") }
+                        )
+                      }
+                      className="text-[9px] font-black text-stone-300 hover:text-sky-500"
+                    >
+                      already did it ✓
+                    </button>
+                  </>
                 ) : item.anchor?.kind === "ceremony" ? (
                   <button
                     disabled={!session}
@@ -641,14 +761,51 @@ export function Today() {
         })}
       </div>
 
-      {adjusting && draft && (
+      {adjusting && (
         <div className="fixed inset-0 z-50 flex items-end justify-center bg-sky-950/80 p-4 sm:items-center">
           <div className="max-h-[85vh] w-full max-w-md overflow-y-auto rounded-3xl bg-white p-5 shadow-xl">
             <h2 className="text-sm font-black text-sky-900">🗺️ Adjust today</h2>
-            <p className="mt-0.5 text-[11px] font-semibold text-stone-400">
-              Shift or drop the flexible pieces. Fixed anchors stay anchored.
+
+            {/* Anchor & church switches — the "not today" controls */}
+            <p className="mt-2 text-[10px] font-black uppercase tracking-widest text-stone-400">
+              Today's anchors
             </p>
-            <div className="mt-3 space-y-1.5">
+            <div className="mt-1.5 space-y-1">
+              {[
+                ...anchorsForDay(day, season)
+                  .filter((a) => a.slug !== "confession" && a.slug !== "exercise" && (a.required || isOff(offs, day, a.slug)))
+                  .map((a) => ({ slug: a.slug, title: a.title, emoji: a.emoji })),
+                ...churchForDay(day).map((e) => ({ slug: `church_${e.slug}`, title: e.title, emoji: e.emoji })),
+              ].map((a) => {
+                const off = isOff(offs, day, a.slug);
+                return (
+                  <div key={a.slug} className="flex items-center gap-2 rounded-2xl bg-stone-50 px-3 py-1.5">
+                    <span className={`flex-1 truncate text-xs font-bold ${off ? "text-stone-300 line-through" : "text-stone-700"}`}>
+                      {a.emoji} {a.title}
+                    </span>
+                    <button
+                      disabled={toggleOff.isPending}
+                      onClick={() => toggleOff.mutate({ day, slug: a.slug })}
+                      className={`rounded-full px-2.5 py-1 text-[10px] font-black ${
+                        off ? "bg-stone-200 text-stone-500" : "bg-sky-100 text-sky-700"
+                      }`}
+                    >
+                      {off ? "not today ➖" : "on ✓"}
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+            <p className="mt-1 text-[10px] font-semibold text-stone-400">
+              Off = free and judgment-free. The confession has no switch.
+            </p>
+
+            {draft && (
+              <>
+            <p className="mt-3 text-[10px] font-black uppercase tracking-widest text-stone-400">
+              Planned slots
+            </p>
+            <div className="mt-1.5 space-y-1.5">
               {draft.slots
                 .slice()
                 .sort((a, b) => daySortKey(a.startMin) - daySortKey(b.startMin))
@@ -733,11 +890,13 @@ export function Today() {
             >
               Save the new course ⚓
             </button>
+              </>
+            )}
             <button
               onClick={() => setAdjusting(false)}
               className="mt-2 w-full text-center text-xs font-bold text-stone-400"
             >
-              Never mind
+              {draft ? "Never mind" : "Done"}
             </button>
           </div>
         </div>

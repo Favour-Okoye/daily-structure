@@ -101,13 +101,25 @@ describe("buildPlan", () => {
 });
 
 describe("work season", () => {
-  it("weekdays trade the rest block for the office and shift exercise to evening", () => {
+  it("weekdays trade the rest block for the church-office day", () => {
     const plan = buildPlan("2026-09-07", "work", [], []); // a Monday
-    expect(plan.slots.find((s) => s.refId === "workday")?.locked).toBe(true);
+    const office = plan.slots.find((s) => s.refId === "workday");
+    expect(office?.locked).toBe(true);
+    expect(office?.startMin).toBe(8 * 60 + 30);
+    expect(office?.endMin).toBe(19 * 60 + 30);
     expect(plan.slots.some((s) => s.kind === "rest")).toBe(false);
-    const exercise = plan.slots.find((s) => s.refId === "exercise");
-    expect(exercise?.startMin).toBe(18 * 60 + 45);
+    // movement is a weekly target now — never a planned daily slot
+    expect(plan.slots.some((s) => s.refId === "exercise")).toBe(false);
     expect(plan.slots.some((s) => s.kind === "skill")).toBe(false); // weekdays: no skill block
+  });
+
+  it("offSlugs removes anchors and church events from the day", () => {
+    const plan = buildPlan("2026-09-03", "gap", [], [], {
+      offSlugs: ["book", "church_thu_evangelism"],
+    }); // a Thursday
+    expect(plan.slots.some((s) => s.refId === "book")).toBe(false);
+    expect(plan.slots.some((s) => s.refId === "thu_evangelism")).toBe(false);
+    expect(plan.slots.some((s) => s.refId === "bible")).toBe(true); // untouched
   });
   it("Saturday keeps rest and allows the skill block", () => {
     const plan = buildPlan("2026-09-05", "work", [], []); // a Saturday

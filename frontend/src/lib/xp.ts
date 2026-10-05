@@ -35,10 +35,11 @@ export async function awardCustom(
   refType: string,
   refId: string,
   points: number,
-  silent = false
+  silent = false,
+  onDay?: string
 ): Promise<boolean> {
   if (!supabase) return false;
-  const day = appDay();
+  const day = onDay ?? appDay();
   const { error } = await supabase.from("ds_xp_events").insert({
     action,
     points,

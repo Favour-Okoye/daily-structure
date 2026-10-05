@@ -117,12 +117,13 @@ export function buildPlan(
   season: Season,
   tasks: PlanTask[],
   events: PlanEvent[],
-  opts: { fridayOnline?: boolean } = {}
+  opts: { fridayOnline?: boolean; offSlugs?: string[] } = {}
 ): DayPlan {
   const wd = weekdayOf(day);
+  const off = new Set(opts.offSlugs ?? []);
   const slots: PlanSlot[] = [];
   const unplaced: DayPlan["unplaced"] = [];
-  const anchors = anchorsForDay(day, season);
+  const anchors = anchorsForDay(day, season).filter((a) => !off.has(a.slug));
 
   // ---- Sunday: church, rest, confession. Nothing else is scheduled. ----
   if (wd === 0) {
@@ -167,6 +168,7 @@ export function buildPlan(
   }
 
   for (const e of churchForDay(day)) {
+    if (off.has(`church_${e.slug}`)) continue; // stream cancelled, duty skipped — not today
     if (e.slug === "fri_prayers") {
       if (opts.fridayOnline) {
         lock("church", e.slug, "Prayers (online)", e.emoji, 20 * 60, 21 * 60);
@@ -184,10 +186,10 @@ export function buildPlan(
     lock("event", ev.id, ev.title, "📌", ev.start_min, ev.end_min);
   }
 
-  // Gap season: the afternoon rest is sacred daily. Work season: office hours
-  // replace it on weekdays (block 9-17:30 for the job), rest survives weekends.
+  // Gap season: the afternoon rest is sacred daily. Work season: the church-office
+  // day eats the middle (out ~8:30, home ~19:30); rest survives weekends.
   if (season === "work" && wd >= 1 && wd <= 5) {
-    lock("event", "workday", "Work — the September life", "💼", 9 * 60, 17 * 60 + 30);
+    lock("event", "workday", "Church office — out in the world", "⛪", 8 * 60 + 30, 19 * 60 + 30);
   } else {
     lock("rest", "rest", "Rest — protected", REST_BLOCK.emoji, REST_BLOCK.startMin, REST_BLOCK.endMin);
   }

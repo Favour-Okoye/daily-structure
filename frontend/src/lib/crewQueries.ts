@@ -54,7 +54,8 @@ import {
 import { useOpenTasks } from "./tasksQueries";
 import { computeStreak, useXpDays } from "./stats";
 import { awardCustom, DS_XP } from "./xp";
-import { useSeason } from "./queries";
+import { isOff, useExerciseTarget, useOffs, useSeason } from "./queries";
+import { applyOffs, bodyDaysInWindow, weeklyBodyMood } from "./crew";
 
 /** ds_anchor_log rows for the last `span` app-days (crew mood window). */
 export function useAnchorRange(span = 14) {
@@ -232,6 +233,8 @@ export function useCrew() {
   const dayCompletesQ = useDayCompletes();
   const save = useSaveCrew();
   const SEASON = useSeason();
+  const offs = useOffs();
+  const exerciseTarget = useExerciseTarget();
   const maintained = useRef<string | null>(null);
   const today = appDay();
   const taskDaysQ = useTaskDaysSince(stateQ.data?.state?.exam?.startedOn ?? null);
@@ -243,7 +246,7 @@ export function useCrew() {
   const totalXp = (xpDaysQ.data ?? []).reduce((s, d) => s + d.points, 0);
   const streak = computeStreak((xpDaysQ.data ?? []).map((d) => d.happened_on), today);
 
-  const areaDays = buildAreaDays(rows);
+  const areaDays = applyOffs(buildAreaDays(rows), offs);
 
   let crew: CrewMember[] = [];
   if (state) {
@@ -262,6 +265,11 @@ export function useCrew() {
         if (c.gone) {
           mood = "gone";
           moodWhy = `walked out on ${c.goneSince} — go after them`;
+        } else if (id === "zoro") {
+          // Weekly judge: movement days vs her target. Stairs count. No walkouts.
+          const bodyDays = bodyDaysInWindow(rows, today);
+          mood = weeklyBodyMood(bodyDays, exerciseTarget);
+          moodWhy = `${bodyDays}/${exerciseTarget} movement days this week`;
         } else if (area) {
           const detail = areaMoodDetail(area, today, state.startedOn, SEASON, areaDays);
           mood = detail.mood;
@@ -321,7 +329,7 @@ export function useCrew() {
     perfect: (dayCompletesQ.data ?? []).includes(yesterday),
     doneSlugs: yDone,
     missedRequired: requiredSlugs(yesterday, SEASON).filter(
-      (s) => !yDone.has(s) && !yExcused.has(s)
+      (s) => !yDone.has(s) && !yExcused.has(s) && !isOff(offs, yesterday, s)
     ),
     tasksDone: 0, // enriched below when task data is loaded
     graceUsed: yExcused.size > 0,
@@ -561,6 +569,7 @@ export function useCompleteQuestDay() {
   const { session } = useAuth();
   const qc = useQueryClient();
   const SEASON = useSeason();
+  const offs = useOffs();
   const today = appDay();
   const logQ = useQuery({
     queryKey: ["ds_anchor_log", session?.user.id, today],
@@ -586,7 +595,7 @@ export function useCompleteQuestDay() {
         .map(([k]) => k)
     );
 
-    if (!questRequirementMet(step, area, today, SEASON, doneSlugs)) {
+    if (!questRequirementMet(step, area, today, SEASON, doneSlugs, new Set(offs[today] ?? []))) {
       return {
         ok: false,
         message:

@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
+  applyOffs,
   areaMood,
+  bodyDaysInWindow,
   bondOf,
   buildAreaDays,
   dilemmaForDay,
@@ -13,6 +15,7 @@ import {
   STARTING_CREW,
   stormTarget,
   WALKOUT_GONE,
+  weeklyBodyMood,
   type LogRow,
   type YesterdayFacts,
 } from "./crew";
@@ -39,54 +42,55 @@ describe("normalizeCrew", () => {
   });
 });
 
-describe("areaMood — Zoro (body/exercise)", () => {
+describe("areaMood — daily areas (calm/quiet time)", () => {
   // Week of Mon 2026-08-17 … Fri 2026-08-21
-  it("happy when the last 3 expected days were all trained", () => {
+  it("happy when the last 3 expected days were all kept", () => {
     const ad = buildAreaDays(
-      rows(["2026-08-18", "exercise"], ["2026-08-19", "exercise"], ["2026-08-20", "exercise"])
+      rows(["2026-08-18", "quiet_time"], ["2026-08-19", "quiet_time"], ["2026-08-20", "quiet_time"])
     );
-    expect(areaMood("body", "2026-08-21", "2026-08-17", SEASON, ad)).toBe("happy");
+    expect(areaMood("calm", "2026-08-21", "2026-08-17", SEASON, ad)).toBe("happy");
   });
 
-  it("sad after three straight missed sessions", () => {
+  it("sad after three straight missed days", () => {
     const ad = buildAreaDays();
-    expect(areaMood("body", "2026-08-21", "2026-08-17", SEASON, ad)).toBe("sad");
+    expect(areaMood("calm", "2026-08-21", "2026-08-17", SEASON, ad)).toBe("sad");
   });
 
-  it("today's training live-bumps the mood one step", () => {
-    const ad = buildAreaDays(rows(["2026-08-21", "exercise"]));
-    // history still empty (sad), but today's session lifts it to worried
-    expect(areaMood("body", "2026-08-21", "2026-08-17", SEASON, ad)).toBe("worried");
+  it("today's completion live-bumps the mood one step", () => {
+    const ad = buildAreaDays(rows(["2026-08-21", "quiet_time"]));
+    expect(areaMood("calm", "2026-08-21", "2026-08-17", SEASON, ad)).toBe("worried");
   });
 
   it("Sundays never count against the crew", () => {
-    // trained Thu 20, Fri 21, Sat 22; Sunday 23 rests; Monday 24 checks mood
     const ad = buildAreaDays(
-      rows(["2026-08-20", "exercise"], ["2026-08-21", "exercise"], ["2026-08-22", "exercise"])
+      rows(["2026-08-20", "quiet_time"], ["2026-08-21", "quiet_time"], ["2026-08-22", "quiet_time"])
     );
-    expect(areaMood("body", "2026-08-24", "2026-08-17", SEASON, ad)).toBe("happy");
+    expect(areaMood("calm", "2026-08-24", "2026-08-17", SEASON, ad)).toBe("happy");
   });
 
   it("brand-new sailors start happy (honeymoon)", () => {
     const ad = buildAreaDays();
-    expect(areaMood("body", "2026-08-18", "2026-08-17", SEASON, ad)).toBe("happy");
+    expect(areaMood("calm", "2026-08-18", "2026-08-17", SEASON, ad)).toBe("happy");
+  });
+
+  it("body is no longer a daily area — Zoro's daily engine stays silent", () => {
+    expect(areaMood("body", "2026-08-21", "2026-08-17", SEASON, buildAreaDays())).toBe("happy");
+    expect(neglectRunOf("body", "2026-08-22", "2026-08-17", SEASON, buildAreaDays())).toBe(0);
   });
 });
 
-describe("neglectRunOf — the walkout clock", () => {
+describe("neglectRunOf — the walkout clock (daily areas)", () => {
   it("5 neglected weekdays trip the walkout threshold", () => {
-    // started Mon 17, nothing ever done, checked Sat 22 → Fri,Thu,Wed,Tue,Mon = 5
-    const run = neglectRunOf("body", "2026-08-22", "2026-08-17", SEASON, buildAreaDays());
+    const run = neglectRunOf("calm", "2026-08-22", "2026-08-17", SEASON, buildAreaDays());
     expect(run).toBe(5);
     expect(run >= WALKOUT_GONE).toBe(true);
   });
-  it("a trained day breaks the run", () => {
-    const ad = buildAreaDays(rows(["2026-08-19", "exercise"]));
-    expect(neglectRunOf("body", "2026-08-22", "2026-08-17", SEASON, ad)).toBe(2);
+  it("a kept day breaks the run", () => {
+    const ad = buildAreaDays(rows(["2026-08-19", "quiet_time"]));
+    expect(neglectRunOf("calm", "2026-08-22", "2026-08-17", SEASON, ad)).toBe(2);
   });
   it("Sunday never extends the run", () => {
-    // started Thu 20, nothing done, checked Tue 25 → Mon 24, Sat 22, Fri 21, Thu 20 (Sun 23 skipped) = 4
-    expect(neglectRunOf("body", "2026-08-25", "2026-08-20", SEASON, buildAreaDays())).toBe(4);
+    expect(neglectRunOf("calm", "2026-08-25", "2026-08-20", SEASON, buildAreaDays())).toBe(4);
   });
 });
 
@@ -181,18 +185,47 @@ describe("storms", () => {
   });
 });
 
+describe("weekly movement (Zoro's new judgment)", () => {
+  it("scales with movement days vs the target", () => {
+    expect(weeklyBodyMood(3, 3)).toBe("happy");
+    expect(weeklyBodyMood(2, 3)).toBe("neutral");
+    expect(weeklyBodyMood(1, 3)).toBe("worried");
+    expect(weeklyBodyMood(0, 3)).toBe("sad");
+  });
+  it("counts distinct done movement days only", () => {
+    const logRows = [
+      ...rows(["2026-10-01", "exercise"], ["2026-10-03", "exercise"]),
+      { day: "2026-10-02", anchor_slug: "exercise", status: "grace" as const },
+    ];
+    expect(bodyDaysInWindow(logRows, "2026-10-05")).toBe(2);
+  });
+});
+
+describe("applyOffs — 'not today' counts like excused", () => {
+  it("off'd days never count against an area", () => {
+    const ad = applyOffs(buildAreaDays([]), {
+      "2026-10-01": ["book", "money_tree"],
+      "2026-10-02": ["book", "money_tree"],
+      "2026-10-03": ["book", "money_tree"],
+    });
+    expect(neglectRunOf("mind", "2026-10-04", "2026-10-01", SEASON, ad)).toBe(0);
+    expect(areaMood("mind", "2026-10-04", "2026-10-01", SEASON, ad)).toBe("happy");
+  });
+});
+
 describe("bondOf", () => {
   it("grows with completions and shrinks with neglect, clamped to 0..100", () => {
     const state = normalizeCrew({ startedOn: "2026-08-17" }, "2026-08-17");
+    state.characters.chopper.recruited = true;
     const done = rows(
-      ["2026-08-18", "exercise"],
-      ["2026-08-19", "exercise"],
-      ["2026-08-20", "exercise"]
+      ["2026-08-18", "quiet_time"],
+      ["2026-08-19", "quiet_time"],
+      ["2026-08-20", "quiet_time"]
     );
     const ad = buildAreaDays(done);
     // 3 days × +2, minus 1 neglected expected day (Mon 17): −3 → 3
-    expect(bondOf("zoro", "2026-08-21", state, SEASON, ad, done)).toBe(3);
+    expect(bondOf("chopper", "2026-08-21", state, SEASON, ad, done)).toBe(3);
     // total neglect: floors at 0
-    expect(bondOf("zoro", "2026-08-21", state, SEASON, buildAreaDays(), [])).toBe(0);
+    expect(bondOf("chopper", "2026-08-21", state, SEASON, buildAreaDays(), [])).toBe(0);
   });
 });

@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
 import { appDay, daySortKey, fmtMin, shiftDay } from "../lib/day";
 import { buildPlan, type DayPlan } from "../lib/planner";
-import { useSeason, useSettings } from "../lib/queries";
+import { anchorsForDay, churchForDay } from "../lib/anchors";
+import { isOff, useOffs, useSeason, useSettings, useToggleOff } from "../lib/queries";
 import { useApprovePlan, useCrew } from "../lib/crewQueries";
 import { useEvents, useOpenTasks } from "../lib/tasksQueries";
 import { useXpDays } from "../lib/stats";
@@ -52,6 +53,9 @@ export function CeremonyGate({
   const tasksQ = useOpenTasks();
   const eventsQ = useEvents();
   const SEASON = useSeason();
+  const offs = useOffs();
+  const toggleOff = useToggleOff();
+  const tomorrowOffs = offs[tomorrow] ?? [];
   const fridayOnline = !!(settingsQ.data?.data as { fridayOnline?: boolean } | undefined)?.fridayOnline;
 
   const built = useMemo(() => {
@@ -65,14 +69,20 @@ export function CeremonyGate({
     const events = (eventsQ.data ?? [])
       .filter((e) => e.day === tomorrow)
       .map((e) => ({ id: e.id, title: e.title, day: e.day, start_min: e.start_min, end_min: e.end_min }));
-    return buildPlan(tomorrow, SEASON, tasks, events, { fridayOnline });
-  }, [tomorrow, tasksQ.data, eventsQ.data, fridayOnline, SEASON]);
+    return buildPlan(tomorrow, SEASON, tasks, events, { fridayOnline, offSlugs: tomorrowOffs });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tomorrow, tasksQ.data, eventsQ.data, fridayOnline, SEASON, JSON.stringify(tomorrowOffs)]);
 
   // Local adjustable copy — Nami proposes, Favour disposes.
   const [plan, setPlan] = useState<DayPlan | null>(null);
   useEffect(() => {
     if (stage === "tomorrow" && plan === null) setPlan(built);
   }, [stage, built, plan]);
+  // Flipping a "not tomorrow" switch recharts the course (shifts reset — intended).
+  useEffect(() => {
+    if (stage === "tomorrow") setPlan(built);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [built]);
 
   const shiftSlot = (refId: string, delta: number) => {
     setPlan((p) =>
@@ -198,6 +208,40 @@ export function CeremonyGate({
                 </p>
               </div>
             </div>
+            {/* Not-tomorrow switches — nothing is permanently fixed */}
+            <div className="mt-3 flex flex-wrap gap-1.5">
+              {[
+                ...anchorsForDay(tomorrow, SEASON)
+                  .filter(
+                    (a) =>
+                      a.slug !== "confession" &&
+                      a.slug !== "exercise" &&
+                      (a.required || isOff(offs, tomorrow, a.slug))
+                  )
+                  .map((a) => ({ slug: a.slug, emoji: a.emoji, title: a.title })),
+                ...churchForDay(tomorrow).map((e) => ({
+                  slug: `church_${e.slug}`,
+                  emoji: e.emoji,
+                  title: e.title,
+                })),
+              ].map((a) => {
+                const off = isOff(offs, tomorrow, a.slug);
+                return (
+                  <button
+                    key={a.slug}
+                    disabled={toggleOff.isPending}
+                    onClick={() => toggleOff.mutate({ day: tomorrow, slug: a.slug })}
+                    className={`rounded-full px-2.5 py-1 text-[10px] font-black ${
+                      off ? "bg-sky-900 text-sky-500 line-through" : "bg-sky-800 text-sky-100"
+                    }`}
+                    title={off ? "tap to restore" : "tap to switch off for tomorrow"}
+                  >
+                    {a.emoji} {a.title.length > 18 ? a.title.slice(0, 18) + "…" : a.title}
+                  </button>
+                );
+              })}
+            </div>
+
             <div className="mt-3 space-y-1.5">
               {(plan?.slots ?? [])
                 .slice()

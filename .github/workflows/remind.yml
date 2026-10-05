@@ -1,0 +1,30 @@
+name: reminders
+
+on:
+  schedule:
+    - cron: "0 10 * * *" # ~12:00 Brussels (11:00 in winter — close enough)
+    - cron: "0 16 * * *" # ~18:00 Brussels (17:00 in winter)
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  nudge:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - run: npm install web-push@3 --no-save --silent
+        working-directory: scripts
+
+      - run: node scripts/send-reminders.mjs
+        env:
+          SUPABASE_URL: ${{ vars.VITE_SUPABASE_URL }}
+          SERVICE_ROLE: ${{ secrets.SUPABASE_SERVICE_ROLE }}
+          VAPID_PRIVATE_KEY: ${{ secrets.VAPID_PRIVATE_KEY }}
+          VAPID_PUBLIC_KEY: "BLT2LtJrdTlaO3JoeGp_dUAnjMnXv99sDkD6mjtqIIO8YsGKYCEfmO5NlS51JkMUG4r8--5Zp-P2TduXjaFyEN0"

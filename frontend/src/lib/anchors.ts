@@ -23,6 +23,8 @@ export interface AnchorDef {
   endMin?: number;
   /** Suggested time for flexible anchors (the Phase-3 planner refines this). */
   suggestMin?: number;
+  /** Judged per week (n days of 7), never per day. */
+  weeklyTarget?: number;
   minutes: number;
   /** Which days require it (0=Sun). Sundays are rest: only the confession. */
   requiredOn: (weekday: number, season: Season) => boolean;
@@ -45,8 +47,10 @@ export const ANCHORS: AnchorDef[] = [
     requiredOn: notSunday,
   },
   {
+    // Weekly target, not a daily duty — stairs, errands and carrying count.
+    // Zoro judges the week's pace; see weeklyBodyMood in crew.ts.
     slug: "exercise",
-    title: "Exercise with sister",
+    title: "Movement",
     emoji: "💪",
     xp: 15,
     area: "body",
@@ -54,8 +58,9 @@ export const ANCHORS: AnchorDef[] = [
     startMin: 8 * 60 + 30,
     endMin: 9 * 60,
     minutes: 30,
-    requiredOn: notSunday,
-    hint: "Zoro will own this one soon. Train like he's watching.",
+    requiredOn: () => false,
+    weeklyTarget: 3,
+    hint: "Any real movement counts — a workout, three flights of stairs on repeat, errands with bags.",
   },
   {
     slug: "noon_prayer",
@@ -169,10 +174,15 @@ export type AnchorForDay = AnchorDef & { required: boolean };
  *  History is untouched — only expectations and times change. */
 const WORK_OVERRIDES: Record<string, Partial<AnchorDef>> = {
   devotional: { startMin: 7 * 60, endMin: 7 * 60 + 30, minutes: 30 },
-  exercise: { startMin: 18 * 60 + 45, endMin: 19 * 60 + 15, hint: "Evening session — Zoro still counts reps." },
-  noon_prayer: { startMin: 12 * 60 + 30, endMin: 13 * 60, minutes: 30, hint: "Lunch-break prayer." },
+  exercise: {
+    startMin: undefined,
+    endMin: undefined,
+    suggestMin: 20 * 60,
+    hint: "Office days on the stairs count. Tick the truth.",
+  },
+  noon_prayer: { startMin: 12 * 60 + 30, endMin: 13 * 60, minutes: 30, hint: "Lunch-break prayer, wherever you are." },
   money_tree: { title: "Money Tree — 1 video", xp: 10, minutes: 20, hint: "One video keeps the tree alive on work days." },
-  quiet_time: { suggestMin: 20 * 60, hint: "10 min after work. Phone face-down." },
+  quiet_time: { suggestMin: 20 * 60 + 30, hint: "10 min after you're home. Phone face-down." },
   bible: { suggestMin: 21 * 60 + 30 },
 };
 

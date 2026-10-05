@@ -2,12 +2,25 @@ import { useEffect, useState } from "react";
 import { useAuth } from "../lib/auth";
 import { supabase } from "../lib/supabase";
 import {
+  useExerciseTarget,
   useSaveConfession,
   useSaveSettingsData,
   useSeason,
   useSetSeason,
   useSettings,
 } from "../lib/queries";
+
+const VAPID_PUBLIC_KEY =
+  "BLT2LtJrdTlaO3JoeGp_dUAnjMnXv99sDkD6mjtqIIO8YsGKYCEfmO5NlS51JkMUG4r8--5Zp-P2TduXjaFyEN0";
+
+function urlBase64ToUint8Array(base64: string) {
+  const padding = "=".repeat((4 - (base64.length % 4)) % 4);
+  const b64 = (base64 + padding).replace(/-/g, "+").replace(/_/g, "/");
+  const raw = window.atob(b64);
+  const out = new Uint8Array(new ArrayBuffer(raw.length));
+  for (let i = 0; i < raw.length; i++) out[i] = raw.charCodeAt(i);
+  return out;
+}
 import { useCrewState } from "../lib/crewQueries";
 import { SKILL_DECK } from "../lib/crew";
 
@@ -57,6 +70,10 @@ export function More() {
         </button>
       </div>
 
+      <RemindersCard />
+
+      <MovementCard />
+
       <BookCard />
 
       <SkillDeckCard />
@@ -83,6 +100,106 @@ export function More() {
           Sign out (both apps)
         </button>
       )}
+    </div>
+  );
+}
+
+function RemindersCard() {
+  const { session } = useAuth();
+  const settingsQ = useSettings();
+  const save = useSaveSettingsData();
+  const [busy, setBusy] = useState(false);
+  const [note, setNote] = useState<string | null>(null);
+  const data = (settingsQ.data?.data ?? {}) as Record<string, unknown> & { push?: unknown };
+  const enabled = !!data.push;
+
+  const enable = async () => {
+    setBusy(true);
+    setNote(null);
+    try {
+      const perm = await Notification.requestPermission();
+      if (perm !== "granted") {
+        setNote("Notifications were blocked — allow them in your browser settings and try again.");
+        return;
+      }
+      const reg = await navigator.serviceWorker.ready;
+      const sub =
+        (await reg.pushManager.getSubscription()) ??
+        (await reg.pushManager.subscribe({
+          userVisibleOnly: true,
+          applicationServerKey: urlBase64ToUint8Array(VAPID_PUBLIC_KEY),
+        }));
+      save.mutate({ ...data, push: sub.toJSON() });
+      setNote("Reminders on — 12:00 and 18:00, only about what's still unticked.");
+    } catch {
+      setNote("Couldn't subscribe on this device. Try from the installed app on your phone.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const disable = async () => {
+    setBusy(true);
+    try {
+      const reg = await navigator.serviceWorker.ready;
+      await (await reg.pushManager.getSubscription())?.unsubscribe();
+    } catch {
+      /* best effort */
+    }
+    save.mutate({ ...data, push: null });
+    setNote("Reminders off.");
+    setBusy(false);
+  };
+
+  return (
+    <div className="rounded-3xl bg-white p-4 shadow-sm ring-1 ring-sky-100">
+      <h2 className="text-sm font-black text-sky-900">🔔 Reminders</h2>
+      <p className="mt-1 text-xs font-semibold text-stone-400">
+        12:00 and 18:00: a nudge listing only what's still unticked. Silent when you're caught up.
+        Never on Sundays.
+      </p>
+      <button
+        disabled={!session || busy || save.isPending}
+        onClick={() => void (enabled ? disable() : enable())}
+        className={`mt-2 w-full rounded-full py-2.5 text-sm font-black transition disabled:opacity-40 ${
+          enabled
+            ? "bg-stone-200 text-stone-600 hover:bg-stone-300"
+            : "bg-sky-900 text-white hover:bg-sky-800"
+        }`}
+      >
+        {busy ? "…" : enabled ? "Turn reminders off" : "Turn reminders on"}
+      </button>
+      {note && <p className="mt-2 text-xs font-bold text-sky-700">{note}</p>}
+    </div>
+  );
+}
+
+function MovementCard() {
+  const { session } = useAuth();
+  const settingsQ = useSettings();
+  const save = useSaveSettingsData();
+  const target = useExerciseTarget();
+  const data = (settingsQ.data?.data ?? {}) as Record<string, unknown>;
+  return (
+    <div className="rounded-3xl bg-white p-4 shadow-sm ring-1 ring-sky-100">
+      <h2 className="text-sm font-black text-sky-900">💪 Movement target</h2>
+      <p className="mt-1 text-xs font-semibold text-stone-400">
+        Days per week Zoro expects. Stairs, errands and carrying all count — tick the truth.
+      </p>
+      <div className="mt-2 flex gap-2">
+        {[2, 3, 4].map((n) => (
+          <button
+            key={n}
+            disabled={!session || save.isPending}
+            onClick={() => save.mutate({ ...data, exerciseTarget: n })}
+            className={`flex-1 rounded-full py-2 text-xs font-black ${
+              target === n ? "bg-sky-900 text-white" : "bg-stone-100 text-stone-500"
+            }`}
+          >
+            {n} days
+          </button>
+        ))}
+      </div>
     </div>
   );
 }

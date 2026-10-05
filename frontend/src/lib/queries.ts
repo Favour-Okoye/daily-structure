@@ -2,7 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "./supabase";
 import { useAuth } from "./auth";
 import { awardCustom } from "./xp";
-import { appDay, appDayWindowUtc } from "./day";
+import { appDay, appDayWindowUtc, shiftDay } from "./day";
 import type { AnchorDef, ChurchEvent } from "./anchors";
 
 /* ------------------------------------------------------------------ */
@@ -54,7 +54,7 @@ export async function flushOutbox(): Promise<number> {
         { onConflict: "user_id,day,anchor_slug", ignoreDuplicates: true }
       );
       if (error) throw error;
-      await awardCustom(it.action, it.refType, it.refId, it.points, true);
+      await awardCustom(it.action, it.refType, it.refId, it.points, true, it.day);
     } catch {
       remaining.push(it);
     }
@@ -113,7 +113,7 @@ async function logAndAward(
     }
     throw error;
   }
-  await awardCustom(action, refType, refId, points);
+  await awardCustom(action, refType, refId, points, false, day);
 }
 
 /** Counts today's MoneyTree watch_video events (shared Supabase project).
@@ -275,6 +275,58 @@ export function useSaveSettingsData() {
     },
     onSuccess: () => void qc.invalidateQueries({ queryKey: ["ds_settings", session?.user.id] }),
   });
+}
+
+/* ------------------------------------------------------------------ */
+/* "Not today" switches — nothing is permanently fixed.                */
+/* Stored per day in settings.data.offs; free, deliberate, judgment-   */
+/* excluded. The confession is the one anchor with no off switch.      */
+/* ------------------------------------------------------------------ */
+
+export type Offs = Record<string, string[]>;
+
+export function useOffs(): Offs {
+  const q = useSettings();
+  return ((q.data?.data as { offs?: Offs } | undefined)?.offs ?? {}) as Offs;
+}
+
+export function isOff(offs: Offs, day: string, slug: string): boolean {
+  return (offs[day] ?? []).includes(slug);
+}
+
+export function useToggleOff() {
+  const { session } = useAuth();
+  const qc = useQueryClient();
+  const settingsQ = useSettings();
+  return useMutation({
+    mutationFn: async ({ day, slug }: { day: string; slug: string }) => {
+      if (!supabase) throw new Error("not connected");
+      if (slug === "confession") throw new Error("The confession has no off switch.");
+      const data = { ...((settingsQ.data?.data as Record<string, unknown>) ?? {}) };
+      const offs: Offs = { ...((data.offs as Offs) ?? {}) };
+      const list = new Set(offs[day] ?? []);
+      if (list.has(slug)) list.delete(slug);
+      else list.add(slug);
+      if (list.size > 0) offs[day] = [...list];
+      else delete offs[day];
+      // prune anything older than two weeks — the past is settled
+      for (const d of Object.keys(offs)) {
+        if (d < shiftDay(appDay(), -14)) delete offs[d];
+      }
+      data.offs = offs;
+      const { error } = await supabase
+        .from("ds_settings")
+        .upsert({ user_id: session?.user.id, data }, { onConflict: "user_id" });
+      if (error) throw error;
+    },
+    onSuccess: () => void qc.invalidateQueries({ queryKey: ["ds_settings", session?.user.id] }),
+  });
+}
+
+/** Movement days per week Zoro expects (she sets it; stairs weeks ≠ gym weeks). */
+export function useExerciseTarget(): number {
+  const q = useSettings();
+  return ((q.data?.data as { exerciseTarget?: number } | undefined)?.exerciseTarget ?? 3);
 }
 
 export function useSaveConfession() {

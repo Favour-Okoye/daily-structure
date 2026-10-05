@@ -431,6 +431,42 @@ export function areaMood(
   return areaMoodDetail(area, today, startedOn, season, areaDays).mood;
 }
 
+/** Zoro's weekly judgment: movement days in the last 7 vs the target.
+ *  No walkouts under this model — worst case he's sad, never gone. */
+export function weeklyBodyMood(doneDays: number, target: number): Mood {
+  if (doneDays >= target) return "happy";
+  if (doneDays >= Math.max(1, target - 1)) return "neutral";
+  if (doneDays >= 1) return "worried";
+  return "sad";
+}
+
+export function bodyDaysInWindow(rows: LogRow[], today: string, span = 7): number {
+  const from = shiftDay(today, -(span - 1));
+  return new Set(
+    rows
+      .filter((r) => r.status === "done" && r.anchor_slug === "exercise" && r.day >= from && r.day <= today)
+      .map((r) => r.day)
+  ).size;
+}
+
+/** Fold "not today" switches into the area map — they count like excused days. */
+export function applyOffs(
+  areaDays: Map<string, AreaDay>,
+  offs: Record<string, string[]>
+): Map<string, AreaDay> {
+  for (const [day, slugs] of Object.entries(offs)) {
+    let entry = areaDays.get(day);
+    if (!entry) {
+      entry = { done: new Set(), excused: new Set() };
+      areaDays.set(day, entry);
+    }
+    for (const slug of slugs) {
+      for (const a of areasOfSlug(slug)) entry.excused.add(a);
+    }
+  }
+  return areaDays;
+}
+
 /** Human words for each area, for the "why" lines. */
 export const AREA_VERB: Record<AreaId, string> = {
   body: "trained",
@@ -658,14 +694,15 @@ export function questRequirementMet(
   area: AreaId,
   day: string,
   season: Season,
-  doneSlugs: Set<string>
+  doneSlugs: Set<string>,
+  offSlugs: Set<string> = new Set()
 ): boolean {
   if (step === 1) {
     if (area === "overall") return doneSlugs.size > 0;
     for (const s of doneSlugs) if (areasOfSlug(s).includes(area)) return true;
     return false;
   }
-  const need = requiredSlugsOfArea(day, season, area);
+  const need = requiredSlugsOfArea(day, season, area).filter((s) => !offSlugs.has(s));
   if (need.length === 0) {
     // rest day / no expectations: showing up with one item still counts
     return questRequirementMet(1, area, day, season, doneSlugs);

@@ -25,6 +25,7 @@ import {
   useToggleOff,
   useDismissed,
   useToggleDismissed,
+  useUndoCheck,
 } from "../lib/queries";
 import { useGrowth } from "../lib/stats";
 import { useAuth } from "../lib/auth";
@@ -169,6 +170,18 @@ export function Today() {
   const log = logQ.data ?? {};
   const checkAnchor = useCheckAnchor(day);
   const checkChurch = useCheckChurch(day);
+  const undoCheck = useUndoCheck(day);
+  // Two-tap undo: first tap on ✅ arms it ("undo?"), second tap undoes.
+  const [undoArm, setUndoArm] = useState<string | null>(null);
+  const armOrUndo = (slug: string) => {
+    if (undoArm === slug) {
+      setUndoArm(null);
+      undoCheck.mutate({ slug });
+    } else {
+      setUndoArm(slug);
+      window.setTimeout(() => setUndoArm((s) => (s === slug ? null : s)), 3000);
+    }
+  };
   const growth = useGrowth();
   const { aboard, state: crewState, scene, dilemmaDef } = useCrew();
   const { left: graceLeft, grace } = useGrace();
@@ -558,7 +571,18 @@ export function Today() {
             </div>
           </div>
           {log["exercise"] ? (
-            <span className="text-xl">✅</span>
+            <button
+              onClick={() => armOrUndo("exercise")}
+              disabled={undoCheck.isPending}
+              className="shrink-0 rounded-full px-2 text-xl"
+              title="Tap twice to undo"
+            >
+              {undoArm === "exercise" ? (
+                <span className="rounded-full bg-rose-100 px-2 py-1 text-[10px] font-black text-rose-600">undo?</span>
+              ) : (
+                "✅"
+              )}
+            </button>
           ) : (
             <button
               disabled={checkAnchor.isPending}
@@ -687,7 +711,22 @@ export function Today() {
                 {item.kind === "rest" ? (
                   <span className="text-xl">😴</span>
                 ) : done ? (
-                  <span className="text-xl">{excused ? "🕊️" : "✅"}</span>
+                  excused || item.kind === "task" || item.kind === "skill" ? (
+                    <span className="text-xl">{excused ? "🕊️" : "✅"}</span>
+                  ) : (
+                    <button
+                      onClick={() => armOrUndo(item.key)}
+                      disabled={undoCheck.isPending}
+                      className="text-xl"
+                      title="Tap twice to undo"
+                    >
+                      {undoArm === item.key ? (
+                        <span className="rounded-full bg-rose-100 px-2 py-1 text-[10px] font-black text-rose-600">undo?</span>
+                      ) : (
+                        "✅"
+                      )}
+                    </button>
+                  )
                 ) : item.kind === "task" ? (
                   <button
                     disabled={!session || completeTask.isPending || !item.task}

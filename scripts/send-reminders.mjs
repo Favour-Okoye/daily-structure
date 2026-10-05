@@ -16,10 +16,20 @@ if (!SERVICE_ROLE) {
   process.exit(0);
 }
 
-const headers = {
-  apikey: SERVICE_ROLE,
-  Authorization: `Bearer ${SERVICE_ROLE}`,
-};
+// New-style secret keys (sb_secret_…) go ONLY in the apikey header — they are not
+// JWTs and are refused as Bearer tokens. Legacy service_role JWTs (eyJ…) need both.
+const KEY = SERVICE_ROLE.trim();
+const keyKind = KEY.startsWith("sb_secret_")
+  ? "new secret key"
+  : KEY.startsWith("sb_publishable_")
+    ? "PUBLISHABLE key (wrong one — need the secret key)"
+    : KEY.startsWith("eyJ")
+      ? "legacy JWT key"
+      : "unrecognized key format";
+console.log(`Key type: ${keyKind} (length ${KEY.length})`);
+const headers = KEY.startsWith("eyJ")
+  ? { apikey: KEY, Authorization: `Bearer ${KEY}` }
+  : { apikey: KEY };
 
 /** App-day: Brussels calendar day, flipped at 04:00 (mirror of lib/day.ts). */
 function appDay(now = new Date()) {

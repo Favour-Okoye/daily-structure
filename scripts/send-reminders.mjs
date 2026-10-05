@@ -26,7 +26,10 @@ const keyKind = KEY.startsWith("sb_secret_")
     : KEY.startsWith("eyJ")
       ? "legacy JWT key"
       : "unrecognized key format";
-console.log(`Key type: ${keyKind} (length ${KEY.length})`);
+// Shape only — this repo's logs are public, so never print any part of the key.
+console.log(
+  `Key type: ${keyKind} (length ${KEY.length}; spaces: ${/\s/.test(KEY)}; quotes: ${/["']/.test(KEY)}; ascii-only: ${/^[\x21-\x7e]+$/.test(KEY)})`
+);
 const headers = KEY.startsWith("eyJ")
   ? { apikey: KEY, Authorization: `Bearer ${KEY}` }
   : { apikey: KEY };
@@ -48,6 +51,14 @@ function weekdayOf(day) {
 
 async function get(path) {
   const res = await fetch(`${SUPABASE_URL}/rest/v1/${path}`, { headers });
+  if (res.status === 401) {
+    // A bad key is a setup problem, not an outage: say so and exit cleanly,
+    // so GitHub doesn't email "workflow failed" twice a day.
+    console.log(
+      "Supabase rejected the key. Update the SUPABASE_SERVICE_ROLE secret with the sb_secret_… key. Skipping this run."
+    );
+    process.exit(0);
+  }
   if (!res.ok) throw new Error(`${path}: ${res.status} ${await res.text()}`);
   return res.json();
 }

@@ -23,6 +23,8 @@ import {
   useSeason,
   useSettings,
   useToggleOff,
+  useDismissed,
+  useToggleDismissed,
 } from "../lib/queries";
 import { useGrowth } from "../lib/stats";
 import { useAuth } from "../lib/auth";
@@ -97,6 +99,7 @@ export function Today() {
   const nowMin = wallMinutes();
   const yday = shiftDay(day, -1);
   const offs = useOffs();
+  const dismissed = useDismissed();
   const toggleOff = useToggleOff();
   const exerciseTarget = useExerciseTarget();
 
@@ -243,7 +246,7 @@ export function Today() {
       if (def) {
         mtAuto.current = true;
         checkAnchor.mutate({ def, meta: { auto: true, videos: mtCountQ.data } });
-        setFlash("🌳 Robin saw you finish your Money Tree videos — logged for you.");
+        setFlash("🌳 Nami spotted you finishing your Money Tree videos — logged for you.");
         window.setTimeout(() => setFlash(null), 5000);
       }
     }
@@ -280,19 +283,21 @@ export function Today() {
   const yesterdayList = useMemo(() => {
     if (nowMin >= 20 * 60 || !yLogQ.isSuccess) return [];
     const out: { slug: string; title: string; emoji: string; def?: AnchorForDay; church?: ChurchEvent }[] = [];
+    const gone = new Set(dismissed[yday] ?? []);
     for (const a of anchorsForDay(yday, season)) {
       if (!a.required && a.slug !== "exercise") continue;
-      if (yLog[a.slug] || isOff(offs, yday, a.slug)) continue;
+      if (yLog[a.slug] || isOff(offs, yday, a.slug) || gone.has(a.slug)) continue;
       out.push({ slug: a.slug, title: a.title, emoji: a.emoji, def: a });
     }
     for (const e of churchForDay(yday)) {
       const key = `church_${e.slug}`;
-      if (yLog[key] || isOff(offs, yday, key)) continue;
+      if (yLog[key] || isOff(offs, yday, key) || gone.has(key)) continue;
       out.push({ slug: key, title: e.title, emoji: e.emoji, church: e });
     }
     return out;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [yday, season, yLogQ.data, offs, nowMin]);
+  }, [yday, season, yLogQ.data, offs, dismissed, nowMin]);
+  const toggleDismissed = useToggleDismissed();
 
   // Rain watch: she bikes to evening church — a wet forecast deserves an early heads-up.
   const hasEveningChurch = churchForDay(day).some((e) => e.startMin >= 17 * 60);
@@ -506,17 +511,27 @@ export function Today() {
           </p>
           <div className="mt-2 flex flex-wrap gap-1.5">
             {yesterdayList.map((y) => (
-              <button
-                key={y.slug}
-                disabled={checkYesterday.isPending || checkYesterdayChurch.isPending}
-                onClick={() => {
-                  if (y.church) checkYesterdayChurch.mutate({ event: y.church });
-                  else if (y.def) checkYesterday.mutate({ def: y.def, meta: { retro: true } });
-                }}
-                className="rounded-full bg-white px-3 py-1.5 text-xs font-bold text-stone-600 shadow-sm hover:bg-amber-100"
-              >
-                {y.emoji} {y.title} ✓
-              </button>
+              <span key={y.slug} className="flex items-center overflow-hidden rounded-full bg-white shadow-sm">
+                <button
+                  disabled={checkYesterday.isPending || checkYesterdayChurch.isPending}
+                  onClick={() => {
+                    if (y.church) checkYesterdayChurch.mutate({ event: y.church });
+                    else if (y.def) checkYesterday.mutate({ def: y.def, meta: { catchUp: true } });
+                  }}
+                  className="py-1.5 pl-3 pr-2 text-xs font-bold text-stone-600 hover:bg-amber-100"
+                  title="It happened — tick it"
+                >
+                  {y.emoji} {y.title} ✓
+                </button>
+                <button
+                  disabled={toggleDismissed.isPending}
+                  onClick={() => toggleDismissed.mutate({ day: yday, slug: y.slug })}
+                  className="border-l border-stone-100 px-2.5 py-1.5 text-xs font-black text-stone-300 hover:bg-stone-100 hover:text-rose-400"
+                  title="Didn't happen — remove it from this list"
+                >
+                  ✗
+                </button>
+              </span>
             ))}
           </div>
         </div>
@@ -743,6 +758,7 @@ export function Today() {
                 {!done &&
                   session &&
                   graceLeft > 0 &&
+                  item.required &&
                   (item.kind === "anchor" || item.kind === "church") &&
                   item.anchor?.kind !== "ceremony" && (
                     <button

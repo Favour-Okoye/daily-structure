@@ -294,32 +294,109 @@ export function isOff(offs: Offs, day: string, slug: string): boolean {
   return (offs[day] ?? []).includes(slug);
 }
 
-export function useToggleOff() {
+/**
+ * Toggle a slug in a per-day list stored in settings.data[key] ("offs" or
+ * "dismissed"). Reads the LATEST cache (not a render-time snapshot) and
+ * updates it optimistically, so two quick taps never overwrite each other.
+ */
+function useToggleDayList(key: "offs" | "dismissed") {
   const { session } = useAuth();
   const qc = useQueryClient();
-  const settingsQ = useSettings();
+  const qKey = ["ds_settings", session?.user.id];
   return useMutation({
     mutationFn: async ({ day, slug }: { day: string; slug: string }) => {
       if (!supabase) throw new Error("not connected");
-      if (slug === "confession") throw new Error("The confession has no off switch.");
-      const data = { ...((settingsQ.data?.data as Record<string, unknown>) ?? {}) };
-      const offs: Offs = { ...((data.offs as Offs) ?? {}) };
-      const list = new Set(offs[day] ?? []);
+      if (key === "offs" && slug === "confession") {
+        throw new Error("The confession has no off switch.");
+      }
+      const current = qc.getQueryData<DsSettings>(qKey);
+      const data = { ...((current?.data as Record<string, unknown>) ?? {}) };
+      const lists: Offs = { ...((data[key] as Offs) ?? {}) };
+      const list = new Set(lists[day] ?? []);
       if (list.has(slug)) list.delete(slug);
       else list.add(slug);
-      if (list.size > 0) offs[day] = [...list];
-      else delete offs[day];
+      if (list.size > 0) lists[day] = [...list];
+      else delete lists[day];
       // prune anything older than two weeks — the past is settled
-      for (const d of Object.keys(offs)) {
-        if (d < shiftDay(appDay(), -14)) delete offs[d];
+      for (const d of Object.keys(lists)) {
+        if (d < shiftDay(appDay(), -14)) delete lists[d];
       }
-      data.offs = offs;
+      data[key] = lists;
+      qc.setQueryData<DsSettings>(qKey, {
+        confession_lines: current?.confession_lines ?? [],
+        data,
+      });
       const { error } = await supabase
         .from("ds_settings")
         .upsert({ user_id: session?.user.id, data }, { onConflict: "user_id" });
       if (error) throw error;
     },
-    onSuccess: () => void qc.invalidateQueries({ queryKey: ["ds_settings", session?.user.id] }),
+    onSettled: () => void qc.invalidateQueries({ queryKey: qKey }),
+  });
+}
+
+export function useToggleOff() {
+  return useToggleDayList("offs");
+}
+
+/** "Didn't happen" in the Yesterday strip: an honest no. It only hides the
+ *  item — the day still counts as missed, exactly as it was. */
+export function useToggleDismissed() {
+  return useToggleDayList("dismissed");
+}
+
+export function useDismissed(): Offs {
+  const q = useSettings();
+  return ((q.data?.data as { dismissed?: Offs } | undefined)?.dismissed ?? {}) as Offs;
+}
+
+/**
+ * Undo a mistaken tick: remove the log row and the XP it earned (and the
+ * day-complete bonus, which re-awards if the day is completed again).
+ */
+export function useUndoCheck(day: string) {
+  const { session } = useAuth();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ slug }: { slug: string }) => {
+      if (!supabase) throw new Error("not connected");
+      const sb = supabase;
+      const { error } = await sb
+        .from("ds_anchor_log")
+        .delete()
+        .eq("day", day)
+        .eq("anchor_slug", slug)
+        .eq("status", "done");
+      if (error) throw error;
+      const xp = slug.startsWith("church_")
+        ? sb
+            .from("ds_xp_events")
+            .delete()
+            .eq("action", "church_event")
+            .eq("ref_type", "event")
+            .eq("ref_id", `${day}:${slug.slice("church_".length)}`)
+        : sb
+            .from("ds_xp_events")
+            .delete()
+            .eq("action", `anchor_${slug}`)
+            .eq("ref_type", "anchor")
+            .eq("ref_id", day);
+      await Promise.all([
+        xp,
+        sb
+          .from("ds_xp_events")
+          .delete()
+          .eq("action", "day_complete")
+          .eq("ref_type", "day")
+          .eq("ref_id", day),
+      ]);
+    },
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ["ds_anchor_log", session?.user.id, day] });
+      void qc.invalidateQueries({ queryKey: ["ds_anchor_range", session?.user.id] });
+      void qc.invalidateQueries({ queryKey: ["ds_xp_days", session?.user.id] });
+      void qc.invalidateQueries({ queryKey: ["ds_day_completes", session?.user.id] });
+    },
   });
 }
 

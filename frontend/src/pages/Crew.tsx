@@ -209,6 +209,21 @@ export function Crew() {
                   </span>
                 </div>
                 <div className="text-[11px] font-bold text-stone-400">{m.role}</div>
+                {m.feeds.length > 0 && (
+                  <div className="mt-1 flex flex-wrap gap-1" title="Any one of these on a day keeps them aboard">
+                    {m.feeds.map((f) => (
+                      <span
+                        key={f.label}
+                        className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${
+                          f.doneToday ? "bg-emerald-100 text-emerald-800" : "bg-stone-100 text-stone-500"
+                        }`}
+                      >
+                        {f.emoji} {f.label}
+                        {f.doneToday && " ✓"}
+                      </span>
+                    ))}
+                  </div>
+                )}
                 <div className="mt-0.5 text-[10px] font-semibold text-sky-600">↳ {m.moodWhy}</div>
                 <div className="mt-1.5">
                   <div className="flex justify-between text-[9px] font-black text-stone-400">

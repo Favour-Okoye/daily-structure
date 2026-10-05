@@ -3,8 +3,9 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "./supabase";
 import { useAuth } from "./auth";
 import { appDay, isoWeekKey, mondayOfWeekKey, shiftDay, weekdayOf } from "./day";
-import { requiredSlugs } from "./anchors";
+import { ANCHORS as ANCHOR_CATALOG, requiredSlugs } from "./anchors";
 import {
+  AREA_FEEDS,
   AREA_VERB,
   DILEMMAS,
   dilemmaForDay,
@@ -212,6 +213,18 @@ export interface CrewMember {
   formName: string;
   gone: boolean;
   hint: string | null;
+  /** The concrete things that keep this crewmate aboard, with today's status. */
+  feeds: { label: string; emoji: string; doneToday: boolean }[];
+}
+
+/** Human labels for feed slugs (anchors come from the catalog). */
+function feedLabel(slug: string): { label: string; emoji: string } {
+  if (slug === "church_*") return { label: "Church events", emoji: "⛪" };
+  if (slug === "task_done") return { label: "Any task done", emoji: "📌" };
+  if (slug === "skill_block") return { label: "Skill blocks", emoji: "🎯" };
+  if (slug === "exercise") return { label: "Movement", emoji: "💪" };
+  const a = ANCHOR_CATALOG.find((x) => x.slug === slug);
+  return { label: a?.title.replace(/ — .*$/, "") ?? slug, emoji: a?.emoji ?? "•" };
 }
 
 const MOOD_RANK: Mood[] = ["sad", "worried", "neutral", "happy"];
@@ -238,15 +251,23 @@ export function useCrew() {
   const maintained = useRef<string | null>(null);
   const today = appDay();
   const taskDaysQ = useTaskDaysSince(stateQ.data?.state?.exam?.startedOn ?? null);
+  const recentTasksQ = useTaskDaysSince(shiftDay(today, -14));
 
   const loading = stateQ.isLoading || rowsQ.isLoading;
   const state = stateQ.data?.state ?? null;
-  const rows = rowsQ.data ?? [];
+  // Completed tasks feed Nami: fold them in as synthetic "task_done" log rows.
+  const taskRows: LogRow[] = [...new Set((recentTasksQ.data ?? []).map((t) => t.day))].map(
+    (day) => ({ day, anchor_slug: "task_done", status: "done" as const })
+  );
+  const rows: LogRow[] = [...(rowsQ.data ?? []), ...taskRows];
   const overdue = (tasksQ.data ?? []).filter((t) => t.due_on && t.due_on < today).length;
   const totalXp = (xpDaysQ.data ?? []).reduce((s, d) => s + d.points, 0);
   const streak = computeStreak((xpDaysQ.data ?? []).map((d) => d.happened_on), today);
 
   const areaDays = applyOffs(buildAreaDays(rows), offs);
+  const doneTodaySlugs = new Set(
+    rows.filter((r) => r.day === today && r.status === "done").map((r) => r.anchor_slug)
+  );
 
   let crew: CrewMember[] = [];
   if (state) {
@@ -313,6 +334,13 @@ export function useCrew() {
         formName: FORM_NAMES[id][Math.min(c.level, maxLevel(id)) - 1],
         gone: c.gone,
         hint: RECRUITS.find((r) => r.id === id)?.hint ?? null,
+        feeds: (area && area !== "overall" ? (AREA_FEEDS[area] ?? []) : []).map((slug) => ({
+          ...feedLabel(slug),
+          doneToday:
+            slug === "church_*"
+              ? [...doneTodaySlugs].some((s) => s.startsWith("church_"))
+              : doneTodaySlugs.has(slug),
+        })),
       };
     });
   }
@@ -400,9 +428,10 @@ export function useCrew() {
     rowsQ.isSuccess &&
     countsQ.isSuccess &&
     xpDaysQ.isSuccess &&
-    dayCompletesQ.isSuccess;
+    dayCompletesQ.isSuccess &&
+    recentTasksQ.isSuccess;
   const snapshotKey = ready
-    ? `${today}:${rows.length}:${(xpDaysQ.data ?? []).length}:${(dayCompletesQ.data ?? []).length}:${(taskDaysQ.data ?? []).length}`
+    ? `${today}:${rows.length}:${(xpDaysQ.data ?? []).length}:${(dayCompletesQ.data ?? []).length}:${(taskDaysQ.data ?? []).length}:${state?.fairnessReviewed}`
     : null;
 
   useEffect(() => {
@@ -424,6 +453,29 @@ export function useCrew() {
         next.comeback.lastDayDone = null;
         logIt(`${CHAR_META[next.comeback.charId].name}'s comeback quest reset — a day was missed.`);
         changed = true;
+      }
+    }
+
+    // 1b. One-time fairness review: walkouts judged under the old unbalanced
+    // feeds (Chopper on quiet time alone, Robin without the Bible) are
+    // re-judged under the balanced ones. Gated, so it never bypasses a
+    // future comeback quest.
+    if (!next.fairnessReviewed) {
+      next.fairnessReviewed = true;
+      changed = true;
+      for (const id of ALL_CHARS) {
+        const c = next.characters[id];
+        const area = CHAR_AREA[id];
+        if (!c.recruited || !c.gone || !area || !c.goneSince) continue;
+        const run = neglectRunOf(area, c.goneSince, next.startedOn, SEASON, areaDays);
+        if (run < walkoutThresholds(next.village[id]).gone) {
+          c.gone = false;
+          c.goneSince = null;
+          if (next.comeback?.charId === id) next.comeback = null;
+          logIt(
+            `⚖️ ${CHAR_META[id].name} came back — under fair rules they never should have left.`
+          );
+        }
       }
     }
 

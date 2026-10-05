@@ -60,17 +60,17 @@ export const CHAR_AREA: Record<CharId, AreaId | null> = {
 
 export const CHAR_META: Record<CharId, { name: string; role: string }> = {
   luffy: { name: "Luffy", role: "Captain — your whole day" },
-  zoro: { name: "Zoro", role: "Body — exercise" },
-  nami: { name: "Nami", role: "Navigator — plans & closing your day" },
+  zoro: { name: "Zoro", role: "Body — movement" },
+  nami: { name: "Nami", role: "Navigator — tasks & treasure" },
   usopp: { name: "Usopp", role: "Skills" },
   sanji: { name: "Sanji", role: "Provision — job prep" },
-  chopper: { name: "Chopper", role: "Calm — quiet time" },
-  robin: { name: "Robin", role: "Mind — books & learning" },
+  chopper: { name: "Chopper", role: "Doctor — stillness & rest" },
+  robin: { name: "Robin", role: "Scholar — reading & learning" },
   naruto: { name: "Naruto", role: "Consistency — the streak" },
   sasuke: { name: "Sasuke", role: "Redemption" },
   sakura: { name: "Sakura", role: "Weekly goals" },
   kakashi: { name: "Kakashi", role: "Mentor" },
-  hinata: { name: "Hinata", role: "Faith" },
+  hinata: { name: "Hinata", role: "Faith — prayer & worship" },
 };
 
 export interface CharState {
@@ -136,6 +136,8 @@ export interface CrewState {
   storm: { day: string; charId: CharId } | null;
   /** A just-passed exam waiting for its celebration scene. */
   pendingLevelUp: CharId | null;
+  /** One-time re-judgment of walkouts made under the old, unbalanced feeds. */
+  fairnessReviewed: boolean;
   log: { day: string; text: string }[];
 }
 
@@ -221,6 +223,7 @@ export function normalizeCrew(raw: unknown, today: string): CrewState {
     voyage: r.voyage ?? { islandIndex: 0, lastLandfallWeek: null, pendingLandfall: null },
     storm: r.storm ?? null,
     pendingLevelUp: r.pendingLevelUp ?? null,
+    fairnessReviewed: r.fairnessReviewed ?? false,
     log: (r.log ?? []).slice(0, 60),
   };
 }
@@ -301,30 +304,29 @@ export interface LogRow {
   status: "done" | "grace";
 }
 
-/** Which area a logged slug feeds. Church events feed faith.
- *  The confession/ceremony feeds "plan" too — closing the day IS Nami's ritual. */
+/**
+ * What keeps each daily-judged crewmate aboard: THREE things each, any one
+ * of them on a day counts. Balanced on purpose — no one lives or dies on a
+ * single anchor. ("church_*" = any church event; "task_done" = any task.)
+ */
+export const AREA_FEEDS: Partial<Record<AreaId, string[]>> = {
+  faith: ["devotional", "noon_prayer", "church_*"], // Hinata — prayer & worship
+  mind: ["bible", "book", "teaching"], // Robin — reading & learning
+  calm: ["quiet_time", "family_prayers", "rested"], // Chopper — stillness & rest
+  plan: ["confession", "task_done", "money_tree"], // Nami — navigation & treasure
+  body: ["exercise"], // Zoro — judged weekly, never daily
+  skills: ["skill_block"], // Usopp
+};
+
+/** Which areas a logged slug feeds (derived from AREA_FEEDS — one source of truth). */
 export function areasOfSlug(slug: string): AreaId[] {
-  if (slug.startsWith("church_")) return ["faith"];
-  switch (slug) {
-    case "devotional":
-    case "noon_prayer":
-    case "bible":
-    case "family_prayers":
-      return ["faith"];
-    case "exercise":
-      return ["body"];
-    case "book":
-    case "money_tree":
-      return ["mind"];
-    case "quiet_time":
-      return ["calm"];
-    case "skill_block":
-      return ["skills"];
-    case "confession":
-      return ["faith", "plan"];
-    default:
-      return [];
+  const out: AreaId[] = [];
+  for (const [area, feeds] of Object.entries(AREA_FEEDS) as [AreaId, string[]][]) {
+    if (feeds.includes(slug) || (slug.startsWith("church_") && feeds.includes("church_*"))) {
+      out.push(area);
+    }
   }
+  return out;
 }
 
 /** Areas that have at least one required anchor on this day.
@@ -333,7 +335,7 @@ export function expectedAreas(day: string, season: Season): Set<AreaId> {
   if (weekdayOf(day) === 0) return new Set();
   const out = new Set<AreaId>();
   for (const a of anchorsForDay(day, season)) {
-    if (a.required) out.add(a.area);
+    if (a.required) for (const area of areasOfSlug(a.slug)) out.add(area);
   }
   out.add("plan"); // closing the day with the ceremony is always expected
   return out;
@@ -469,11 +471,11 @@ export function applyOffs(
 
 /** Human words for each area, for the "why" lines. */
 export const AREA_VERB: Record<AreaId, string> = {
-  body: "trained",
-  faith: "kept the faith",
-  mind: "fed the mind",
-  calm: "sat quietly",
-  plan: "closed the day",
+  body: "moved",
+  faith: "prayed",
+  mind: "read or learned",
+  calm: "rested",
+  plan: "navigated",
   skills: "practiced",
   provision: "prepared the future",
   overall: "showed up",

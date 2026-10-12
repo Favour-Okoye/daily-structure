@@ -193,10 +193,8 @@ function RemindersCard() {
 
 function MovementCard() {
   const { session } = useAuth();
-  const settingsQ = useSettings();
   const save = useSaveSettingsData();
   const target = useExerciseTarget();
-  const data = (settingsQ.data?.data ?? {}) as Record<string, unknown>;
   return (
     <div className="rounded-3xl bg-white p-4 shadow-sm ring-1 ring-sky-100">
       <h2 className="text-sm font-black text-sky-900">💪 Movement target</h2>

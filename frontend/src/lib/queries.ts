@@ -262,17 +262,35 @@ export function useSettings() {
   });
 }
 
+/**
+ * Read-modify-write on settings.data against the FRESH database row, so a
+ * screen that loaded minutes ago can never overwrite newer values (or the
+ * reminder robot's cleanup). Callers pass only the keys they change.
+ */
+export async function patchSettingsData(
+  userId: string | undefined,
+  patch: (data: Record<string, unknown>) => Record<string, unknown>
+): Promise<Record<string, unknown>> {
+  if (!supabase) throw new Error("not connected");
+  const { data: row, error: readErr } = await supabase
+    .from("ds_settings")
+    .select("data")
+    .maybeSingle();
+  if (readErr) throw readErr;
+  const next = patch({ ...((row?.data as Record<string, unknown>) ?? {}) });
+  const { error } = await supabase
+    .from("ds_settings")
+    .upsert({ user_id: userId, data: next }, { onConflict: "user_id" });
+  if (error) throw error;
+  return next;
+}
+
 export function useSaveSettingsData() {
   const { session } = useAuth();
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async (data: Record<string, unknown>) => {
-      if (!supabase) throw new Error("not connected");
-      const { error } = await supabase
-        .from("ds_settings")
-        .upsert({ user_id: session?.user.id, data }, { onConflict: "user_id" });
-      if (error) throw error;
-    },
+    mutationFn: async (changes: Record<string, unknown>) =>
+      patchSettingsData(session?.user.id, (d) => ({ ...d, ...changes })),
     onSuccess: () => void qc.invalidateQueries({ queryKey: ["ds_settings", session?.user.id] }),
   });
 }
@@ -310,26 +328,30 @@ function useToggleDayList(key: "offs" | "dismissed") {
         throw new Error("The confession has no off switch.");
       }
       const current = qc.getQueryData<DsSettings>(qKey);
-      const data = { ...((current?.data as Record<string, unknown>) ?? {}) };
-      const lists: Offs = { ...((data[key] as Offs) ?? {}) };
-      const list = new Set(lists[day] ?? []);
-      if (list.has(slug)) list.delete(slug);
-      else list.add(slug);
-      if (list.size > 0) lists[day] = [...list];
-      else delete lists[day];
-      // prune anything older than two weeks — the past is settled
-      for (const d of Object.keys(lists)) {
-        if (d < shiftDay(appDay(), -14)) delete lists[d];
-      }
-      data[key] = lists;
+      const toggle = (lists: Offs): Offs => {
+        const out: Offs = { ...lists };
+        const list = new Set(out[day] ?? []);
+        if (list.has(slug)) list.delete(slug);
+        else list.add(slug);
+        if (list.size > 0) out[day] = [...list];
+        else delete out[day];
+        // prune anything older than two weeks — the past is settled
+        for (const d of Object.keys(out)) {
+          if (d < shiftDay(appDay(), -14)) delete out[d];
+        }
+        return out;
+      };
+      // optimistic: flip it on screen immediately
+      const optimistic = { ...((current?.data as Record<string, unknown>) ?? {}) };
+      optimistic[key] = toggle((optimistic[key] as Offs) ?? {});
       qc.setQueryData<DsSettings>(qKey, {
         confession_lines: current?.confession_lines ?? [],
-        data,
+        data: optimistic,
       });
-      const { error } = await supabase
-        .from("ds_settings")
-        .upsert({ user_id: session?.user.id, data }, { onConflict: "user_id" });
-      if (error) throw error;
+      await patchSettingsData(session?.user.id, (d) => ({
+        ...d,
+        [key]: toggle((d[key] as Offs) ?? {}),
+      }));
     },
     onSettled: () => void qc.invalidateQueries({ queryKey: qKey }),
   });

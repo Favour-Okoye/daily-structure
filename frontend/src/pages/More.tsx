@@ -1,5 +1,7 @@
 import { useEffect, useState } from "react";
 import { useAuth } from "../lib/auth";
+import { useQueryClient } from "@tanstack/react-query";
+import { pushSupported, remindersOn, saveThisDevice, turnRemindersOff } from "../lib/push";
 import { supabase } from "../lib/supabase";
 import {
   useExerciseTarget,
@@ -10,17 +12,6 @@ import {
   useSettings,
 } from "../lib/queries";
 
-const VAPID_PUBLIC_KEY =
-  "BLT2LtJrdTlaO3JoeGp_dUAnjMnXv99sDkD6mjtqIIO8YsGKYCEfmO5NlS51JkMUG4r8--5Zp-P2TduXjaFyEN0";
-
-function urlBase64ToUint8Array(base64: string) {
-  const padding = "=".repeat((4 - (base64.length % 4)) % 4);
-  const b64 = (base64 + padding).replace(/-/g, "+").replace(/_/g, "/");
-  const raw = window.atob(b64);
-  const out = new Uint8Array(new ArrayBuffer(raw.length));
-  for (let i = 0; i < raw.length; i++) out[i] = raw.charCodeAt(i);
-  return out;
-}
 import { useCrewState } from "../lib/crewQueries";
 import { SKILL_DECK } from "../lib/crew";
 
@@ -106,33 +97,32 @@ export function More() {
 
 function RemindersCard() {
   const { session } = useAuth();
+  const qc = useQueryClient();
   const settingsQ = useSettings();
-  const save = useSaveSettingsData();
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState<string | null>(null);
-  const data = (settingsQ.data?.data ?? {}) as Record<string, unknown> & { push?: unknown };
-  const enabled = !!data.push;
+  const data = (settingsQ.data?.data ?? {}) as Record<string, unknown>;
+  const enabled = remindersOn(data);
+  const refresh = () => qc.invalidateQueries({ queryKey: ["ds_settings", session?.user.id] });
 
   const enable = async () => {
     setBusy(true);
     setNote(null);
     try {
-      const perm = await Notification.requestPermission();
-      if (perm !== "granted") {
-        setNote("Notifications were blocked — allow them in your browser settings and try again.");
+      if (!pushSupported()) {
+        setNote("This browser can't receive notifications. Use the installed app on your phone.");
         return;
       }
-      const reg = await navigator.serviceWorker.ready;
-      const sub =
-        (await reg.pushManager.getSubscription()) ??
-        (await reg.pushManager.subscribe({
-          userVisibleOnly: true,
-          applicationServerKey: urlBase64ToUint8Array(VAPID_PUBLIC_KEY),
-        }));
-      save.mutate({ ...data, push: sub.toJSON() });
-      setNote("Reminders on — 12:00 and 18:00, only about what's still unticked.");
+      const perm = await Notification.requestPermission();
+      if (perm !== "granted") {
+        setNote("Notifications are blocked for this app. Allow them in your phone's settings, then try again.");
+        return;
+      }
+      await saveThisDevice(session?.user.id, true);
+      await refresh();
+      setNote("Reminders on for this phone. Tap Send a test to check.");
     } catch {
-      setNote("Couldn't subscribe on this device. Try from the installed app on your phone.");
+      setNote("Couldn't turn reminders on here. Open the installed app on your phone and try again.");
     } finally {
       setBusy(false);
     }
@@ -141,34 +131,61 @@ function RemindersCard() {
   const disable = async () => {
     setBusy(true);
     try {
-      const reg = await navigator.serviceWorker.ready;
-      await (await reg.pushManager.getSubscription())?.unsubscribe();
-    } catch {
-      /* best effort */
+      await turnRemindersOff(session?.user.id);
+      await refresh();
+      setNote("Reminders off.");
+    } finally {
+      setBusy(false);
     }
-    save.mutate({ ...data, push: null });
-    setNote("Reminders off.");
-    setBusy(false);
+  };
+
+  const test = async () => {
+    setBusy(true);
+    setNote(null);
+    try {
+      const reg = await navigator.serviceWorker.ready;
+      await reg.showNotification("Daily Structure ⚓", {
+        body: "Test: if you can read this, notifications reach this phone.",
+        icon: "icons/icon-192.png",
+        tag: "ds-test",
+      });
+      setNote("Test sent. If nothing appeared, notifications are muted for this app in your phone's settings.");
+    } catch {
+      setNote("Couldn't show a test here. Open the installed app on your phone.");
+    } finally {
+      setBusy(false);
+    }
   };
 
   return (
     <div className="rounded-3xl bg-white p-4 shadow-sm ring-1 ring-sky-100">
       <h2 className="text-sm font-black text-sky-900">🔔 Reminders</h2>
       <p className="mt-1 text-xs font-semibold text-stone-400">
-        12:00 and 18:00: a nudge listing only what's still unticked. Silent when you're caught up.
-        Never on Sundays.
+        Around 12:00 and 18:00: a nudge listing only what's still unticked. Silent when you're
+        caught up. Never on Sundays.
       </p>
-      <button
-        disabled={!session || busy || save.isPending}
-        onClick={() => void (enabled ? disable() : enable())}
-        className={`mt-2 w-full rounded-full py-2.5 text-sm font-black transition disabled:opacity-40 ${
-          enabled
-            ? "bg-stone-200 text-stone-600 hover:bg-stone-300"
-            : "bg-sky-900 text-white hover:bg-sky-800"
-        }`}
-      >
-        {busy ? "…" : enabled ? "Turn reminders off" : "Turn reminders on"}
-      </button>
+      <div className="mt-2 flex gap-2">
+        <button
+          disabled={!session || busy}
+          onClick={() => void (enabled ? disable() : enable())}
+          className={`flex-1 rounded-full py-2.5 text-sm font-black transition disabled:opacity-40 ${
+            enabled
+              ? "bg-stone-200 text-stone-600 hover:bg-stone-300"
+              : "bg-sky-900 text-white hover:bg-sky-800"
+          }`}
+        >
+          {busy ? "…" : enabled ? "Turn reminders off" : "Turn reminders on"}
+        </button>
+        {enabled && (
+          <button
+            disabled={busy}
+            onClick={() => void test()}
+            className="rounded-full bg-amber-400 px-4 text-sm font-black text-sky-950 hover:bg-amber-300 disabled:opacity-40"
+          >
+            Send a test
+          </button>
+        )}
+      </div>
       {note && <p className="mt-2 text-xs font-bold text-sky-700">{note}</p>}
     </div>
   );
@@ -191,7 +208,7 @@ function MovementCard() {
           <button
             key={n}
             disabled={!session || save.isPending}
-            onClick={() => save.mutate({ ...data, exerciseTarget: n })}
+            onClick={() => save.mutate({ exerciseTarget: n })}
             className={`flex-1 rounded-full py-2 text-xs font-black ${
               target === n ? "bg-sky-900 text-white" : "bg-stone-100 text-stone-500"
             }`}
@@ -241,7 +258,7 @@ function BookCard() {
           <button
             key={n}
             disabled={!session || save.isPending}
-            onClick={() => save.mutate({ ...data, book: { title: title.trim(), chapters: n } })}
+            onClick={() => save.mutate({ book: { title: title.trim(), chapters: n } })}
             className={`rounded-full px-4 py-1.5 text-xs font-black ${
               chapters === n ? "bg-sky-900 text-white" : "bg-stone-100 text-stone-500"
             }`}
@@ -251,7 +268,7 @@ function BookCard() {
         ))}
         <button
           disabled={!session || save.isPending || !title.trim()}
-          onClick={() => save.mutate({ ...data, book: { title: title.trim(), chapters } })}
+          onClick={() => save.mutate({ book: { title: title.trim(), chapters } })}
           className="ml-auto rounded-full bg-amber-400 px-4 py-1.5 text-xs font-black text-sky-950 transition enabled:hover:bg-amber-300 disabled:opacity-40"
         >
           {save.isPending ? "Saving…" : save.isSuccess ? "Saved 📗" : "Save"}
@@ -346,7 +363,7 @@ function FridayToggle() {
       <div className="mt-2 flex gap-2">
         <button
           disabled={!session || save.isPending}
-          onClick={() => save.mutate({ ...data, fridayOnline: false })}
+          onClick={() => save.mutate({ fridayOnline: false })}
           className={`flex-1 rounded-full py-2 text-xs font-black ${
             !online ? "bg-sky-900 text-white" : "bg-stone-100 text-stone-500"
           }`}
@@ -355,7 +372,7 @@ function FridayToggle() {
         </button>
         <button
           disabled={!session || save.isPending}
-          onClick={() => save.mutate({ ...data, fridayOnline: true })}
+          onClick={() => save.mutate({ fridayOnline: true })}
           className={`flex-1 rounded-full py-2 text-xs font-black ${
             online ? "bg-sky-900 text-white" : "bg-stone-100 text-stone-500"
           }`}

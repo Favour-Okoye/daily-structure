@@ -2,9 +2,15 @@ name: reminders
 
 on:
   schedule:
-    - cron: "0 10 * * *" # ~12:00 Brussels (11:00 in winter — close enough)
-    - cron: "0 16 * * *" # ~18:00 Brussels (17:00 in winter)
-  workflow_dispatch: {}
+    # GitHub's scheduler often runs hours late, so wake every 20 minutes;
+    # the script only speaks inside the real Brussels windows, once each.
+    - cron: "7,27,47 * * * *"
+  workflow_dispatch:
+    inputs:
+      slot:
+        description: "Force a slot for testing (midday or evening)"
+        required: false
+        default: ""
 
 permissions:
   contents: read
@@ -26,5 +32,6 @@ jobs:
         env:
           SUPABASE_URL: ${{ vars.VITE_SUPABASE_URL }}
           SERVICE_ROLE: ${{ secrets.SUPABASE_SERVICE_ROLE }}
+          FORCE_SLOT: ${{ inputs.slot }}
           VAPID_PRIVATE_KEY: ${{ secrets.VAPID_PRIVATE_KEY }}
           VAPID_PUBLIC_KEY: "BLT2LtJrdTlaO3JoeGp_dUAnjMnXv99sDkD6mjtqIIO8YsGKYCEfmO5NlS51JkMUG4r8--5Zp-P2TduXjaFyEN0"

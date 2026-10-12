@@ -3,11 +3,13 @@ import { TabBar } from "./TabBar";
 import { XpToast } from "./XpToast";
 import { CrewScene } from "./CrewScene";
 import { LandfallScene } from "./LandfallScene";
+import { usePushSelfHeal } from "../lib/push";
 import { useAuth } from "../lib/auth";
 import { supabase, supabaseConfigured } from "../lib/supabase";
 
 export function AppShell() {
   const { session } = useAuth();
+  usePushSelfHeal();
   return (
     <div className="min-h-screen pb-24">
       <header className="sticky top-0 z-20 bg-sky-900 text-white shadow-md">
